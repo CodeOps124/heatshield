@@ -1,5 +1,18 @@
 # HeatShield — Build Plan
 
+## Status (updated 2026-09-28)
+Live: https://d3tda9dyutl7ux.cloudfront.net — details and real command output in `docs/BUILD_LOG.md`.
+
+| Phase | Status |
+|---|---|
+| 0 · AWS connection + proof | Done: `aws login`, AWS Agent Toolkit, AWS MCP Server `✔ Connected`, first MCP tool call logged. Signed in as root (switch to IAM identity pending). |
+| 1 · Skeleton deploy / public URL | Done: SAM stack `heatshield` (us-east-1), CloudFront + S3 (OAC) + HTTP API. |
+| 2 · Data model + weather + risk engine | Done: 4 DynamoDB tables, Open-Meteo, NWS heat index verified vs MetPy. |
+| 3 · Registration + leader dashboard | Done: groups, invite links, dashboard, personal page, delete-my-data, read-only demo group. |
+| 4 · Bedrock localized guidance | Done: Claude Haiku 4.5 → Nova 2 Lite → static; cache; validation; 13 languages. Claude pending Anthropic use-case form (owner action). |
+| 5 · Alert loop | Done: EventBridge Scheduler hourly → Lambda → SNS; invoked manually (0 errors). Real email proof pending owner's subscription confirmation. |
+| 6 · Polish for judging | README, architecture diagram, screenshots, submission text, demo script done. Remaining: public repo, demo video, Builder Center tags. |
+
 Read `CLAUDE.md` first. This is the order of operations, sized for a hackathon timeline
 (assume 3–5 focused working sessions before the deadline; adjust dates once you know the
 actual submission deadline and put it at the top of this file).

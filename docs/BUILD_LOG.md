@@ -282,6 +282,23 @@ http://… -> 301 Moved Permanently -> https://…
    (verified with `aws apigatewayv2 get-stage`). A per-IP AWS WAF rule is the production fix
    (~$6–7/month, not added without the owner's approval).
 
+4. *IAM scope bug, found with CloudTrail.* After registering a real email, the personal page
+   showed email status "unknown" instead of "pending". The code had swallowed the error, so
+   Claude Code looked it up in CloudTrail instead of guessing:
+   ```
+   $ aws cloudtrail lookup-events --lookup-attributes AttributeKey=EventName,AttributeValue=GetSubscriptionAttributes ...
+   "errorCode": "AccessDenied",
+   "errorMessage": "User: arn:aws:sts::6115****0540:assumed-role/heatshield-EnrollmentApiFunctionRole-…/heatshield-EnrollmentApiFunction-…
+     is not authorized to perform: SNS:GetSubscriptionAttributes on resource:
+     arn:aws:sns:us-east-1:6115****0540:heatshield-AlertsTopic-3ehD7DOOF0Rj because no identity-based policy allows ..."
+   ```
+   SNS authorizes subscription-level actions against the **topic** ARN; the policy had been scoped
+   to `topic:*` (subscription ARNs). This had been flagged as an unverified AWS fact when the
+   template was written, and it was caught on the live stack as planned. The same gap would have
+   made *delete my data* fail to unsubscribe email users. Fix: both ARNs in the policy, and the
+   error is now logged (`subscription_status_failed`). Verified after deploy `fbe3fa6`:
+   `emailStatus: pending`.
+
 **Scheduled alert loop, invoked manually:**
 ```
 $ aws lambda invoke --function-name heatshield-AlertCheckFunction-… --payload '{}' out.json
