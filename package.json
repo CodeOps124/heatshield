@@ -1,0 +1,15 @@
+{
+  "name": "heatshield",
+  "version": "1.0.0",
+  "private": true,
+  "description": "HeatShield - multilingual heat-risk early warning on AWS (AWS Student Builder Group: Zero to Shipped)",
+  "type": "module",
+  "license": "MIT",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "test": "node --test \"infra/tests/*.test.mjs\"",
+    "validate": "sam validate --lint --template-file infra/template.yaml"
+  }
+}

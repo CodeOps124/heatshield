@@ -1,0 +1,347 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: >-
+  HeatShield - multilingual heat-risk early warning. S3 + CloudFront frontend, HTTP API + Lambda
+  backend, DynamoDB, Amazon Bedrock guidance, EventBridge Scheduler + SNS alerts. Fully serverless:
+  near-zero idle cost, nothing to patch.
+
+Parameters:
+  BedrockModelId:
+    Type: String
+    Description: Primary Bedrock model or inference-profile ID for guidance generation.
+  BedrockFallbackModelId:
+    Type: String
+    Default: ''
+    Description: Optional second model tried when the primary fails (for example an Amazon Nova profile).
+  BedrockFoundationModelArnPattern:
+    Type: String
+    Default: 'anthropic.claude-haiku-4-5*'
+    Description: Foundation-model name pattern the primary inference profile routes to (IAM scoping).
+  BedrockFallbackFoundationModelArnPattern:
+    Type: String
+    Default: 'amazon.nova-*'
+    Description: Foundation-model name pattern for the fallback model (IAM scoping).
+  AppVersion:
+    Type: String
+    Default: dev
+  AlertScheduleState:
+    Type: String
+    AllowedValues: [ENABLED, DISABLED]
+    Default: ENABLED
+
+Conditions:
+  HasFallbackModel: !Not [!Equals [!Ref BedrockFallbackModelId, '']]
+
+Globals:
+  Function:
+    Runtime: nodejs22.x
+    Architectures: [arm64]
+    CodeUri: functions/
+    MemorySize: 512
+    Timeout: 15
+    Tracing: Active
+    Environment:
+      Variables:
+        APP_VERSION: !Ref AppVersion
+        GROUPS_TABLE: !Ref GroupsTable
+        LOCATIONS_TABLE: !Ref LocationsTable
+        ALERTS_TABLE: !Ref AlertsTable
+        GUIDANCE_CACHE_TABLE: !Ref GuidanceCacheTable
+        ALERTS_TOPIC_ARN: !Ref AlertsTopic
+        BEDROCK_MODEL_ID: !Ref BedrockModelId
+        BEDROCK_FALLBACK_MODEL_ID: !Ref BedrockFallbackModelId
+
+Resources:
+  # ------------------------------------------------------------------ data
+  GroupsTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - { AttributeName: groupId, AttributeType: S }
+      KeySchema:
+        - { AttributeName: groupId, KeyType: HASH }
+
+  LocationsTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - { AttributeName: locationId, AttributeType: S }
+        - { AttributeName: groupId, AttributeType: S }
+      KeySchema:
+        - { AttributeName: locationId, KeyType: HASH }
+      GlobalSecondaryIndexes:
+        - IndexName: byGroup # sparse: only locations enrolled in a group carry groupId
+          KeySchema:
+            - { AttributeName: groupId, KeyType: HASH }
+          Projection: { ProjectionType: ALL }
+
+  AlertsTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - { AttributeName: locationId, AttributeType: S }
+        - { AttributeName: alertDate, AttributeType: S }
+      KeySchema:
+        - { AttributeName: locationId, KeyType: HASH }
+        - { AttributeName: alertDate, KeyType: RANGE }
+      TimeToLiveSpecification: { AttributeName: expiresAt, Enabled: true }
+
+  GuidanceCacheTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - { AttributeName: cacheKey, AttributeType: S }
+      KeySchema:
+        - { AttributeName: cacheKey, KeyType: HASH }
+      TimeToLiveSpecification: { AttributeName: expiresAt, Enabled: true }
+
+  # ------------------------------------------------------------------ alerts
+  AlertsTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      DisplayName: HeatShield # shown as the sender name on alert emails
+
+  # ------------------------------------------------------------------ API
+  HttpApiAccessLogs:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      RetentionInDays: 14
+
+  HttpApi:
+    Type: AWS::Serverless::HttpApi
+    Properties:
+      DefaultRouteSettings: # per-route throttle: caps abuse (and Bedrock spend) on a public endpoint
+        ThrottlingBurstLimit: 20
+        ThrottlingRateLimit: 10
+      AccessLogSettings:
+        DestinationArn: !GetAtt HttpApiAccessLogs.Arn
+        Format: '{"requestId":"$context.requestId","routeKey":"$context.routeKey","status":"$context.status","latencyMs":"$context.responseLatency","integrationError":"$context.integrationErrorMessage"}'
+
+  PublicApiFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      Description: Public API - health, geocoding, heat-risk assessment, Bedrock guidance
+      Handler: handlers/public-api.handler
+      Timeout: 25
+      Policies:
+        - DynamoDBCrudPolicy: { TableName: !Ref GuidanceCacheTable }
+        - Statement:
+            - Sid: InvokeGuidanceModels
+              Effect: Allow
+              Action: bedrock:InvokeModel
+              Resource:
+                - !Sub arn:${AWS::Partition}:bedrock:${AWS::Region}:${AWS::AccountId}:inference-profile/${BedrockModelId}
+                - !Sub arn:${AWS::Partition}:bedrock:*::foundation-model/${BedrockFoundationModelArnPattern}
+                - !If
+                  - HasFallbackModel
+                  - !Sub arn:${AWS::Partition}:bedrock:${AWS::Region}:${AWS::AccountId}:inference-profile/${BedrockFallbackModelId}
+                  - !Ref AWS::NoValue
+                - !If
+                  - HasFallbackModel
+                  - !Sub arn:${AWS::Partition}:bedrock:*::foundation-model/${BedrockFallbackFoundationModelArnPattern}
+                  - !Ref AWS::NoValue
+      Events:
+        Health: { Type: HttpApi, Properties: { ApiId: !Ref HttpApi, Method: GET, Path: /api/health } }
+        Geocode: { Type: HttpApi, Properties: { ApiId: !Ref HttpApi, Method: GET, Path: /api/geocode } }
+        Risk: { Type: HttpApi, Properties: { ApiId: !Ref HttpApi, Method: GET, Path: /api/risk } }
+        Guidance: { Type: HttpApi, Properties: { ApiId: !Ref HttpApi, Method: GET, Path: /api/guidance } }
+
+  EnrollmentApiFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      Description: Groups, registrations, community-leader dashboard, self-service deletion
+      Handler: handlers/enrollment-api.handler
+      Timeout: 20
+      Policies:
+        - DynamoDBCrudPolicy: { TableName: !Ref GroupsTable }
+        - DynamoDBCrudPolicy: { TableName: !Ref LocationsTable }
+        - DynamoDBCrudPolicy: { TableName: !Ref AlertsTable }
+        - Statement:
+            - Sid: SubscribeEmailToAlerts
+              Effect: Allow
+              Action: sns:Subscribe
+              Resource: !Ref AlertsTopic
+            - Sid: ManageOwnSubscriptions
+              Effect: Allow
+              Action: [sns:Unsubscribe, sns:GetSubscriptionAttributes]
+              Resource: !Sub ${AlertsTopic}:*
+      Events:
+        CreateGroup: { Type: HttpApi, Properties: { ApiId: !Ref HttpApi, Method: POST, Path: /api/groups } }
+        GetGroup: { Type: HttpApi, Properties: { ApiId: !Ref HttpApi, Method: GET, Path: '/api/groups/{groupId}' } }
+        Dashboard: { Type: HttpApi, Properties: { ApiId: !Ref HttpApi, Method: GET, Path: '/api/groups/{groupId}/dashboard' } }
+        RemoveMember: { Type: HttpApi, Properties: { ApiId: !Ref HttpApi, Method: DELETE, Path: '/api/groups/{groupId}/members/{locationId}' } }
+        Register: { Type: HttpApi, Properties: { ApiId: !Ref HttpApi, Method: POST, Path: /api/locations } }
+        GetLocation: { Type: HttpApi, Properties: { ApiId: !Ref HttpApi, Method: GET, Path: '/api/locations/{locationId}' } }
+        DeleteLocation: { Type: HttpApi, Properties: { ApiId: !Ref HttpApi, Method: DELETE, Path: '/api/locations/{locationId}' } }
+
+  AlertCheckFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      Description: Hourly - recompute risk for every registered location and send SNS alerts on threshold crossing
+      Handler: handlers/alert-check.handler
+      Timeout: 300
+      Environment:
+        Variables:
+          SITE_URL: !Sub https://${Distribution.DomainName}
+      Policies:
+        - DynamoDBReadPolicy: { TableName: !Ref LocationsTable }
+        - DynamoDBCrudPolicy: { TableName: !Ref AlertsTable }
+        - DynamoDBCrudPolicy: { TableName: !Ref GuidanceCacheTable }
+        - SNSPublishMessagePolicy: { TopicName: !GetAtt AlertsTopic.TopicName }
+        - Statement:
+            - Sid: InvokeGuidanceModels
+              Effect: Allow
+              Action: bedrock:InvokeModel
+              Resource:
+                - !Sub arn:${AWS::Partition}:bedrock:${AWS::Region}:${AWS::AccountId}:inference-profile/${BedrockModelId}
+                - !Sub arn:${AWS::Partition}:bedrock:*::foundation-model/${BedrockFoundationModelArnPattern}
+                - !If
+                  - HasFallbackModel
+                  - !Sub arn:${AWS::Partition}:bedrock:${AWS::Region}:${AWS::AccountId}:inference-profile/${BedrockFallbackModelId}
+                  - !Ref AWS::NoValue
+                - !If
+                  - HasFallbackModel
+                  - !Sub arn:${AWS::Partition}:bedrock:*::foundation-model/${BedrockFallbackFoundationModelArnPattern}
+                  - !Ref AWS::NoValue
+      Events:
+        Hourly:
+          Type: ScheduleV2
+          Properties:
+            ScheduleExpression: cron(0 * * * ? *)
+            State: !Ref AlertScheduleState
+            RetryPolicy: { MaximumRetryAttempts: 0 } # next hour's run is the retry
+
+  # Explicit log groups so logs expire (cost hygiene) instead of being kept forever.
+  PublicApiLogs:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub /aws/lambda/${PublicApiFunction}
+      RetentionInDays: 14
+  EnrollmentApiLogs:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub /aws/lambda/${EnrollmentApiFunction}
+      RetentionInDays: 14
+  AlertCheckLogs:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub /aws/lambda/${AlertCheckFunction}
+      RetentionInDays: 14
+
+  # ------------------------------------------------------------------ frontend
+  SiteBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      PublicAccessBlockConfiguration: # private: only CloudFront (via OAC) can read it
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      OwnershipControls:
+        Rules: [{ ObjectOwnership: BucketOwnerEnforced }]
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault: { SSEAlgorithm: AES256 }
+
+  SiteBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref SiteBucket
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: AllowCloudFrontOriginAccessControl
+            Effect: Allow
+            Principal: { Service: cloudfront.amazonaws.com }
+            Action: s3:GetObject
+            Resource: !Sub ${SiteBucket.Arn}/*
+            Condition:
+              StringEquals:
+                AWS:SourceArn: !Sub arn:${AWS::Partition}:cloudfront::${AWS::AccountId}:distribution/${Distribution}
+          - Sid: DenyInsecureTransport
+            Effect: Deny
+            Principal: '*'
+            Action: 's3:*'
+            Resource: [!GetAtt SiteBucket.Arn, !Sub '${SiteBucket.Arn}/*']
+            Condition: { Bool: { 'aws:SecureTransport': 'false' } }
+
+  SiteOriginAccessControl:
+    Type: AWS::CloudFront::OriginAccessControl
+    Properties:
+      OriginAccessControlConfig:
+        Name: !Sub ${AWS::StackName}-site-oac
+        OriginAccessControlOriginType: s3
+        SigningBehavior: always
+        SigningProtocol: sigv4
+
+  SecurityHeadersPolicy:
+    Type: AWS::CloudFront::ResponseHeadersPolicy
+    Properties:
+      ResponseHeadersPolicyConfig:
+        Name: !Sub ${AWS::StackName}-security-headers
+        SecurityHeadersConfig:
+          ContentSecurityPolicy:
+            ContentSecurityPolicy: "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; font-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'; upgrade-insecure-requests"
+            Override: true
+          ContentTypeOptions: { Override: true }
+          FrameOptions: { FrameOption: DENY, Override: true }
+          ReferrerPolicy: { ReferrerPolicy: strict-origin-when-cross-origin, Override: true }
+          StrictTransportSecurity: { AccessControlMaxAgeSec: 31536000, IncludeSubdomains: true, Override: true }
+
+  Distribution:
+    Type: AWS::CloudFront::Distribution
+    Properties:
+      DistributionConfig:
+        Enabled: true
+        Comment: HeatShield - frontend (S3) + API (/api/* -> HTTP API) on one HTTPS origin
+        DefaultRootObject: index.html
+        HttpVersion: http2and3
+        PriceClass: PriceClass_All # users are worldwide (Karachi, Lagos, Dubai...) - serve from every edge
+        Origins:
+          - Id: site
+            DomainName: !GetAtt SiteBucket.RegionalDomainName
+            S3OriginConfig: { OriginAccessIdentity: '' }
+            OriginAccessControlId: !GetAtt SiteOriginAccessControl.Id
+          - Id: api
+            DomainName: !Sub ${HttpApi}.execute-api.${AWS::Region}.${AWS::URLSuffix}
+            CustomOriginConfig:
+              OriginProtocolPolicy: https-only
+              OriginSSLProtocols: [TLSv1.2]
+        DefaultCacheBehavior:
+          TargetOriginId: site
+          ViewerProtocolPolicy: redirect-to-https
+          AllowedMethods: [GET, HEAD]
+          Compress: true
+          CachePolicyId: 658327ea-f89d-4fab-a63d-7e88639e58f6 # Managed-CachingOptimized
+          ResponseHeadersPolicyId: !Ref SecurityHeadersPolicy
+        CacheBehaviors:
+          - PathPattern: /api/*
+            TargetOriginId: api
+            ViewerProtocolPolicy: https-only
+            AllowedMethods: [GET, HEAD, OPTIONS, PUT, PATCH, POST, DELETE]
+            Compress: true
+            CachePolicyId: 4135ea2d-6df8-44a3-9df3-4b5a84be39ad # Managed-CachingDisabled
+            OriginRequestPolicyId: b689b0a8-53d0-40ab-baf2-68738e2966ac # Managed-AllViewerExceptHostHeader
+            ResponseHeadersPolicyId: !Ref SecurityHeadersPolicy
+
+Outputs:
+  SiteUrl:
+    Description: Public HTTPS URL (frontend + API)
+    Value: !Sub https://${Distribution.DomainName}
+  ApiDirectUrl:
+    Description: HTTP API endpoint (the site calls it via CloudFront at /api/*)
+    Value: !Sub https://${HttpApi}.execute-api.${AWS::Region}.${AWS::URLSuffix}
+  DistributionId:
+    Value: !Ref Distribution
+  SiteBucketName:
+    Value: !Ref SiteBucket
+  AlertCheckFunctionName:
+    Value: !Ref AlertCheckFunction
+  AlertsTopicArn:
+    Value: !Ref AlertsTopic
+  LocationsTableName:
+    Value: !Ref LocationsTable

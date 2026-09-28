@@ -1,0 +1,7 @@
+{
+  "name": "heatshield-functions",
+  "version": "1.0.0",
+  "private": true,
+  "description": "HeatShield Lambda functions. No runtime dependencies: AWS SDK v3 is provided by the Lambda Node.js runtime.",
+  "type": "module"
+}
