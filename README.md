@@ -2,7 +2,7 @@
 
 **A weather app tells you it's 41 °C. HeatShield tells you what to do about it: for your body, your job, and in your language, before the hottest hours arrive.**
 
-**Live app: __SITE_URL__**
+**Live app: https://d3tda9dyutl7ux.cloudfront.net**
 
 `#social-good` (Climate resilience) · `#community`
 
@@ -26,12 +26,18 @@ These are exactly the people least likely to get a useful warning. A forecast sa
 
 | What | Link |
 |---|---|
-| A live result (Karachi, outdoor worker, Urdu) | __SITE_URL__/?place=Karachi%2C%20Pakistan&lat=24.86&lon=67.01&profile=outdoor_worker&lang=ur |
-| Same idea, Arabic, right-to-left | __SITE_URL__/?place=Dubai%2C%20UAE&lat=25.2&lon=55.27&profile=outdoor_worker&lang=ar |
-| The community-leader dashboard (read-only demo, 10 fictional members in 10 real hot cities) | __DEMO_URL__ |
-| Health endpoint | __SITE_URL__/api/health |
+| A live result (Karachi, outdoor worker, Urdu) | https://d3tda9dyutl7ux.cloudfront.net/?place=Karachi%2C%20Pakistan&lat=24.86&lon=67.01&profile=outdoor_worker&lang=ur |
+| Same idea, Arabic, right-to-left | https://d3tda9dyutl7ux.cloudfront.net/?place=Dubai%2C%20UAE&lat=25.2&lon=55.27&profile=outdoor_worker&lang=ar |
+| The community-leader dashboard (read-only demo, 10 fictional members in 10 real hot cities) | https://d3tda9dyutl7ux.cloudfront.net/group.html#g=5NpOU_pMXAK_&k=Q51QdY6DIZK7P4pLCF9B8KAiofrIcFgj |
+| Health endpoint | https://d3tda9dyutl7ux.cloudfront.net/api/health |
 
 Everything on those pages is computed live from the current forecast. Nothing is hard-coded.
+
+| Personal result: Dubai, outdoor worker, Arabic | Community-leader dashboard | Mobile, Urdu, dark mode |
+|---|---|---|
+| ![Result in Arabic](docs/screenshots/result-dubai-arabic.png) | ![Leader dashboard](docs/screenshots/leader-dashboard.png) | ![Mobile Urdu](docs/screenshots/mobile-urdu-dark.png) |
+
+*Screenshots of the live site, captured by an automated headless-Chrome run on 2026-09-28.*
 
 ## Architecture
 

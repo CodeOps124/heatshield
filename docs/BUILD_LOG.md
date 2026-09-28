@@ -191,8 +191,116 @@ bugs, all fixed in the same session:
   The Codex MCP call returned "You've hit your usage limit … try again at Oct 14th, 2026", so
   this session's review was done by re-reading the code and by the tests + browser checks above.
 
-**What's left**
+**What was left at the end of the local phase** (all but the email proof done in session 2 below)
 - Finish AWS sign-in + Agent Toolkit setup and paste the real connection proof above.
 - Confirm Bedrock model access and the exact inference-profile IDs from `aws bedrock` output.
 - First `sam deploy`, seed the read-only demo group, trigger one real alert email.
 - README with live URL, architecture diagram, demo video.
+
+---
+
+### 2026-09-28 — Session 2: connected to AWS, first deploy, verified live
+
+**Bedrock reality check before deploying (real CLI output, not assumptions).** The first call to
+Claude on the brand-new account failed; Amazon Nova worked:
+```
+2026-09-28T18:15:14Z  $ aws bedrock-runtime converse --model-id us.anthropic.claude-haiku-4-5-20251001-v1:0 ...
+AccessDeniedException: Your account is currently being verified. Verification normally takes less than 2 hours.
+
+$ aws bedrock-runtime converse --model-id us.amazon.nova-2-lite-v1:0 ...  (the real production prompt, Arabic, live Dubai data)
+stopReason: end_turn | usage: {"inputTokens":844,"outputTokens":152,"totalTokens":996} | latencyMs: 1375
+--- VALIDATION: PASS (JSON shape + Arabic script) ---
+```
+Decision: ship with Claude Haiku 4.5 as primary and Nova 2 Lite as automatic fallback, so the
+app works immediately and upgrades itself when Claude access arrives.
+
+**First deploy** (`node scripts/deploy.mjs`: tests → `sam validate --lint` → `sam build` →
+`sam deploy` → S3 sync → CloudFront invalidation → smoke test on the public URL):
+```
+Successfully created/updated stack - heatshield in us-east-1
+Smoke test
+  https://d3tda9dyutl7ux.cloudfront.net/            -> 200
+  https://d3tda9dyutl7ux.cloudfront.net/api/health  -> {"ok":true,"service":"heatshield-api","version":"0f237b7","region":"us-east-1","time":"2026-09-28T18:23:09.462Z"}
+Live: https://d3tda9dyutl7ux.cloudfront.net   (version 0f237b7)
+```
+36 resources created (3 Lambda functions + roles, HTTP API + stage, 4 DynamoDB tables, SNS topic,
+EventBridge schedule, S3 bucket + policy, CloudFront distribution + OAC + response-headers policy,
+log groups).
+
+**What the Lambda logs showed about Bedrock (CloudWatch Logs, `bedrock_guidance_*` events):**
+```
+{"msg":"bedrock_guidance_generated","modelId":"us.anthropic.claude-haiku-4-5-20251001-v1:0","language":"es","latencyMs":3354,"inputTokens":931,"outputTokens":270}
+{"msg":"bedrock_guidance_failed","modelId":"us.anthropic.claude-haiku-4-5-20251001-v1:0","error":"ResourceNotFoundException","message":"Model use case details have not been submitted for this account. ..."}
+{"msg":"bedrock_guidance_generated","modelId":"us.amazon.nova-2-lite-v1:0","language":"ar","latencyMs":1202,"inputTokens":844,"outputTokens":133}
+{"msg":"bedrock_guidance_failed","modelId":"us.amazon.nova-2-lite-v1:0","error":"Error","message":"Model output was truncated"}
+```
+So: one Claude call succeeded, then Anthropic's one-time *use-case form* became the blocker
+(an account-owner action). Nova served Arabic and Bengali; a Swahili request hit Nova's token
+limit, failed validation, and the user got the hand-written fallback — the safety net worked as
+designed, visibly labelled "Pre-written safety guidance".
+
+**Multilingual quality, checked by reading the output (not just by the validator).** Same live
+Dubai scenario on Nova 2 Lite, all five passed the automated JSON + script checks:
+```
+[es] PASS 1120ms | El calor es peligroso ahora y hasta la madrugada.
+[hi] PASS 1180ms | अब बहुत ज़्यादा गर्मी का ख़तरा है, ध्यान रखें।
+[bn] PASS 1583ms | আজ রাতের মধ্যে জরার ঝুঁকি খুব বেশি।
+[sw] PASS 1708ms | Hatari kubwa ya joto leo usiku na kesho
+[zh] PASS 1653ms | 现在和今晚要非常小心高温。
+```
+Reading them: Spanish, Hindi and Chinese are correct. The Bengali headline uses জরা ("old age")
+where it means heat, and a later Bengali reply had non-words; the Swahili actions were partly
+ungrammatical. Lesson recorded in the README's limitations: a script check proves the *language*,
+not the *meaning*; lower-resource languages need a fluent reviewer, and Claude should be primary.
+
+**Live end-to-end test in a real browser** (headless Chrome against the CloudFront URL): home →
+Dubai/Arabic result (risk 927 ms, guidance 962 ms from cache, `dir=rtl lang=ar`) → create group →
+join via invite → leader dashboard → read-only demo dashboard (10 rows, 0 remove buttons) → personal
+page → *delete my data* → dashboard empty again → mobile 390 px (0 px horizontal overflow).
+`"errors": []` — no console errors, so the strict CSP breaks nothing.
+
+**Live security checks:**
+```
+Content-Security-Policy: default-src 'self'; script-src 'self'; ... frame-ancestors 'none'; upgrade-insecure-requests
+Strict-Transport-Security: max-age=31536000; includeSubDomains
+X-Frame-Options: DENY / X-Content-Type-Options: nosniff / Referrer-Policy: strict-origin-when-cross-origin
+direct S3 object access (must be 403): 403
+http://… -> 301 Moved Permanently -> https://…
+```
+
+**Bugs found on the live site and fixed the same session**
+1. *Ambiguous risky hours.* The live dashboard read "Risky 14:00–13:00" (meaning: now until
+   13:00 tomorrow) and showed "Lower risk (next 12 h)" beside a window that was actually tomorrow.
+   The risk engine now returns day offsets, a correct exclusive end, and a plain-English label
+   ("now until 13:00 tomorrow", "10:00 tomorrow to 19:00", "all of the next 24 hours") used by the
+   UI, dashboard, alert email and the Bedrock prompt (prompt v2). 2 regression tests added.
+2. *A literal "null" under the action plan.* Native `Element.append(null)` renders the text
+   "null". Fixed with a `fill()` helper; the live E2E test now fails if any page shows
+   "null", "undefined" or "NaN".
+3. *Abuse vector found in self-review:* `POST /api/locations` can make AWS send a confirmation
+   email to any address typed in. Sign-up routes are now throttled to 1 req/s, burst 3
+   (verified with `aws apigatewayv2 get-stage`). A per-IP AWS WAF rule is the production fix
+   (~$6–7/month, not added without the owner's approval).
+
+**Scheduled alert loop, invoked manually:**
+```
+$ aws lambda invoke --function-name heatshield-AlertCheckFunction-… --payload '{}' out.json
+{ "status": 200, "error": null }
+{"checked":10,"sent":0,"dashboardOnly":1,"quiet":7,"belowThreshold":2,"alreadyAlerted":0,"errors":0}
+```
+(7 demo members were in local quiet hours, 2 below their threshold, 1 — Cuiabá at 14:30 local,
+Danger — recorded for the dashboard; demo members have no email by design.)
+
+**On a suggestion to rewrite the core in C++ for speed:** measured before deciding.
+`assessRisk` (full 96-hour assessment) takes **14.4 µs**; one Open-Meteo call takes **587 ms**;
+a Bedrock call 1–3 s. Compute is ~0.002 % of a request, so a C++ rewrite (custom Lambda runtime,
+cross-compiling for arm64) would add ship-gate risk for no user-visible gain. Kept JavaScript.
+
+**What's left (needs the account owner)**
+- Submit Anthropic's one-time use-case form for Bedrock (console → Bedrock → Model catalog →
+  Claude Haiku 4.5) so Claude becomes the primary model again.
+- One real alert email: register an email, click "Confirm subscription", then invoke the alert
+  Lambda with `{"forceLocationId": …}` and screenshot the inbox.
+- Switch day-to-day CLI work from the root user to a least-privilege IAM identity.
+- Publish the repo (GitHub), record the 2–3 minute demo video, tag `#social-good` + `#community`
+  in Builder Center.
