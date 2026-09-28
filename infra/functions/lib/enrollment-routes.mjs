@@ -234,7 +234,11 @@ export function createEnrollmentApi({ store, notifier, weather, now = () => Date
       const loc = await requireOwner(event);
       let emailStatus = 'none';
       if (loc.subscriptionArn) {
-        emailStatus = await notifier.subscriptionStatus(loc.subscriptionArn).catch(() => 'unknown');
+        emailStatus = await notifier.subscriptionStatus(loc.subscriptionArn).catch((err) => {
+          // Never fail silently: an IAM gap here once hid behind "unknown" (see BUILD_LOG).
+          log.warn('subscription_status_failed', { locationId: loc.locationId, name: err.name, message: err.message });
+          return 'unknown';
+        });
       }
       const [group, lastAlert] = await Promise.all([
         loc.groupId ? store.getGroup(loc.groupId) : null,

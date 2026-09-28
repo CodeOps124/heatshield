@@ -101,7 +101,7 @@ The development process is logged with real command output in [docs/BUILD_LOG.md
 ## Run it yourself
 
 ```bash
-npm test                       # 46 unit tests, no AWS needed
+npm test                       # 48 unit tests, no AWS needed
 npm run dev                    # http://localhost:8787 — real weather, in-memory data, Bedrock stubbed
 npm run deploy                 # test -> lint -> sam build/deploy -> upload site -> smoke-test the public URL
 npm run seed:demo              # create the read-only demo group through the live API

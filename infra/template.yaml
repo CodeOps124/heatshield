@@ -178,7 +178,10 @@ Resources:
             - Sid: ManageOwnSubscriptions
               Effect: Allow
               Action: [sns:Unsubscribe, sns:GetSubscriptionAttributes]
-              Resource: !Sub ${AlertsTopic}:*
+              # SNS authorizes these against the TOPIC ARN, not the subscription ARN (verified in
+              # CloudTrail: "not authorized to perform: SNS:GetSubscriptionAttributes on resource:
+              # arn:aws:sns:...:heatshield-AlertsTopic-..."). Both forms are listed.
+              Resource: [!Ref AlertsTopic, !Sub '${AlertsTopic}:*']
       Events:
         CreateGroup: { Type: HttpApi, Properties: { ApiId: !Ref HttpApi, Method: POST, Path: /api/groups } }
         GetGroup: { Type: HttpApi, Properties: { ApiId: !Ref HttpApi, Method: GET, Path: '/api/groups/{groupId}' } }
