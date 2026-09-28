@@ -21,6 +21,20 @@ Parameters:
     Type: String
     Default: 'amazon.nova-*'
     Description: Foundation-model name pattern for the fallback model (IAM scoping).
+  AgentModelId:
+    Type: String
+    Default: us.amazon.nova-2-lite-v1:0
+    Description: Model for the tool-using agents (Sol, Kai, Otto).
+  AgentFoundationModelArnPattern:
+    Type: String
+    Default: 'amazon.nova-2-lite*'
+  ReviewerModelId:
+    Type: String
+    Default: us.amazon.nova-pro-v1:0
+    Description: Model for the reviewers (Lexi, Vera) - a different model family from the writer.
+  ReviewerFoundationModelArnPattern:
+    Type: String
+    Default: 'amazon.nova-pro*'
   AppVersion:
     Type: String
     Default: dev
@@ -50,8 +64,57 @@ Globals:
         ALERTS_TOPIC_ARN: !Ref AlertsTopic
         BEDROCK_MODEL_ID: !Ref BedrockModelId
         BEDROCK_FALLBACK_MODEL_ID: !Ref BedrockFallbackModelId
+        AGENT_MODEL_ID: !Ref AgentModelId
+        REVIEWER_MODEL_ID: !Ref ReviewerModelId
+        AGENT_LOG_TABLE: !Ref AgentLogTable
 
 Resources:
+  # ------------------------------------------------------------------ agents: shared model access
+  # One managed policy, scoped to exactly the inference profiles (and the foundation models they
+  # route to) that HeatShield uses. Attached to every function that calls Bedrock.
+  BedrockInvokePolicy:
+    Type: AWS::IAM::ManagedPolicy
+    Properties:
+      Description: HeatShield - invoke only the Bedrock models the agents use
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: InvokeHeatShieldModels
+            Effect: Allow
+            Action: bedrock:InvokeModel
+            Resource:
+              - !Sub arn:${AWS::Partition}:bedrock:${AWS::Region}:${AWS::AccountId}:inference-profile/${BedrockModelId}
+              - !Sub arn:${AWS::Partition}:bedrock:${AWS::Region}:${AWS::AccountId}:inference-profile/${AgentModelId}
+              - !Sub arn:${AWS::Partition}:bedrock:${AWS::Region}:${AWS::AccountId}:inference-profile/${ReviewerModelId}
+              - !Sub arn:${AWS::Partition}:bedrock:*::foundation-model/${BedrockFoundationModelArnPattern}
+              - !Sub arn:${AWS::Partition}:bedrock:*::foundation-model/${AgentFoundationModelArnPattern}
+              - !Sub arn:${AWS::Partition}:bedrock:*::foundation-model/${ReviewerFoundationModelArnPattern}
+              - !If
+                - HasFallbackModel
+                - !Sub arn:${AWS::Partition}:bedrock:${AWS::Region}:${AWS::AccountId}:inference-profile/${BedrockFallbackModelId}
+                - !Ref AWS::NoValue
+              - !If
+                - HasFallbackModel
+                - !Sub arn:${AWS::Partition}:bedrock:*::foundation-model/${BedrockFallbackFoundationModelArnPattern}
+                - !Ref AWS::NoValue
+
+  AgentLogTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - { AttributeName: pk, AttributeType: S }
+        - { AttributeName: sk, AttributeType: S }
+      KeySchema:
+        - { AttributeName: pk, KeyType: HASH }
+        - { AttributeName: sk, KeyType: RANGE }
+      TimeToLiveSpecification: { AttributeName: expiresAt, Enabled: true }
+
+  OpsTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      DisplayName: HeatShield Ops # Otto's incident reports; subscribe an on-call email to receive them
+
   # ------------------------------------------------------------------ data
   GroupsTable:
     Type: AWS::DynamoDB::Table
@@ -127,6 +190,9 @@ Resources:
         POST /api/groups:
           ThrottlingBurstLimit: 3
           ThrottlingRateLimit: 1
+        POST /api/groups/{groupId}/plan: # runs Kai (Bedrock); also a per-group 10-minute cooldown in code
+          ThrottlingBurstLimit: 2
+          ThrottlingRateLimit: 1
       AccessLogSettings:
         DestinationArn: !GetAtt HttpApiAccessLogs.Arn
         Format: '{"requestId":"$context.requestId","routeKey":"$context.routeKey","status":"$context.status","latencyMs":"$context.responseLatency","integrationError":"$context.integrationErrorMessage"}'
@@ -134,27 +200,15 @@ Resources:
   PublicApiFunction:
     Type: AWS::Serverless::Function
     Properties:
-      Description: Public API - health, geocoding, heat-risk assessment, Bedrock guidance
+      Description: Public API - health, geocoding, heat risk, guidance (Mira writes, Lexi and Vera review), agents feed
       Handler: handlers/public-api.handler
-      Timeout: 25
+      Timeout: 28
       Policies:
         - DynamoDBCrudPolicy: { TableName: !Ref GuidanceCacheTable }
-        - Statement:
-            - Sid: InvokeGuidanceModels
-              Effect: Allow
-              Action: bedrock:InvokeModel
-              Resource:
-                - !Sub arn:${AWS::Partition}:bedrock:${AWS::Region}:${AWS::AccountId}:inference-profile/${BedrockModelId}
-                - !Sub arn:${AWS::Partition}:bedrock:*::foundation-model/${BedrockFoundationModelArnPattern}
-                - !If
-                  - HasFallbackModel
-                  - !Sub arn:${AWS::Partition}:bedrock:${AWS::Region}:${AWS::AccountId}:inference-profile/${BedrockFallbackModelId}
-                  - !Ref AWS::NoValue
-                - !If
-                  - HasFallbackModel
-                  - !Sub arn:${AWS::Partition}:bedrock:*::foundation-model/${BedrockFallbackFoundationModelArnPattern}
-                  - !Ref AWS::NoValue
+        - DynamoDBCrudPolicy: { TableName: !Ref AgentLogTable }
+        - !Ref BedrockInvokePolicy
       Events:
+        Agents: { Type: HttpApi, Properties: { ApiId: !Ref HttpApi, Method: GET, Path: /api/agents } }
         Health: { Type: HttpApi, Properties: { ApiId: !Ref HttpApi, Method: GET, Path: /api/health } }
         Geocode: { Type: HttpApi, Properties: { ApiId: !Ref HttpApi, Method: GET, Path: /api/geocode } }
         Risk: { Type: HttpApi, Properties: { ApiId: !Ref HttpApi, Method: GET, Path: /api/risk } }
@@ -163,13 +217,18 @@ Resources:
   EnrollmentApiFunction:
     Type: AWS::Serverless::Function
     Properties:
-      Description: Groups, registrations, community-leader dashboard, self-service deletion
+      Description: Groups, registrations, community-leader dashboard (with Kai's check-in plan), self-service deletion
       Handler: handlers/enrollment-api.handler
-      Timeout: 20
+      Timeout: 28
+      Environment:
+        Variables:
+          COORDINATOR_FUNCTION: !Ref CoordinatorFunction
       Policies:
         - DynamoDBCrudPolicy: { TableName: !Ref GroupsTable }
         - DynamoDBCrudPolicy: { TableName: !Ref LocationsTable }
         - DynamoDBCrudPolicy: { TableName: !Ref AlertsTable }
+        - DynamoDBReadPolicy: { TableName: !Ref AgentLogTable }
+        - LambdaInvokePolicy: { FunctionName: !Ref CoordinatorFunction }
         - Statement:
             - Sid: SubscribeEmailToAlerts
               Effect: Allow
@@ -190,6 +249,7 @@ Resources:
         Register: { Type: HttpApi, Properties: { ApiId: !Ref HttpApi, Method: POST, Path: /api/locations } }
         GetLocation: { Type: HttpApi, Properties: { ApiId: !Ref HttpApi, Method: GET, Path: '/api/locations/{locationId}' } }
         DeleteLocation: { Type: HttpApi, Properties: { ApiId: !Ref HttpApi, Method: DELETE, Path: '/api/locations/{locationId}' } }
+        RequestPlan: { Type: HttpApi, Properties: { ApiId: !Ref HttpApi, Method: POST, Path: '/api/groups/{groupId}/plan' } }
 
   AlertCheckFunction:
     Type: AWS::Serverless::Function
@@ -204,22 +264,9 @@ Resources:
         - DynamoDBReadPolicy: { TableName: !Ref LocationsTable }
         - DynamoDBCrudPolicy: { TableName: !Ref AlertsTable }
         - DynamoDBCrudPolicy: { TableName: !Ref GuidanceCacheTable }
+        - DynamoDBCrudPolicy: { TableName: !Ref AgentLogTable }
         - SNSPublishMessagePolicy: { TopicName: !GetAtt AlertsTopic.TopicName }
-        - Statement:
-            - Sid: InvokeGuidanceModels
-              Effect: Allow
-              Action: bedrock:InvokeModel
-              Resource:
-                - !Sub arn:${AWS::Partition}:bedrock:${AWS::Region}:${AWS::AccountId}:inference-profile/${BedrockModelId}
-                - !Sub arn:${AWS::Partition}:bedrock:*::foundation-model/${BedrockFoundationModelArnPattern}
-                - !If
-                  - HasFallbackModel
-                  - !Sub arn:${AWS::Partition}:bedrock:${AWS::Region}:${AWS::AccountId}:inference-profile/${BedrockFallbackModelId}
-                  - !Ref AWS::NoValue
-                - !If
-                  - HasFallbackModel
-                  - !Sub arn:${AWS::Partition}:bedrock:*::foundation-model/${BedrockFallbackFoundationModelArnPattern}
-                  - !Ref AWS::NoValue
+        - !Ref BedrockInvokePolicy
       Events:
         Hourly:
           Type: ScheduleV2
@@ -243,6 +290,93 @@ Resources:
     Type: AWS::Logs::LogGroup
     Properties:
       LogGroupName: !Sub /aws/lambda/${AlertCheckFunction}
+      RetentionInDays: 14
+
+  # ------------------------------------------------------------------ scheduled AI agents
+  SentinelFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      Description: Sol - Heat Sentinel agent. Excess Heat Factor vs local climate, heat watches and briefing
+      Handler: handlers/agents.sentinel
+      Timeout: 300
+      Policies:
+        - DynamoDBReadPolicy: { TableName: !Ref LocationsTable }
+        - DynamoDBCrudPolicy: { TableName: !Ref AgentLogTable }
+        - !Ref BedrockInvokePolicy
+      Events:
+        Hourly:
+          Type: ScheduleV2
+          Properties:
+            ScheduleExpression: cron(5 * * * ? *)
+            State: !Ref AlertScheduleState
+            RetryPolicy: { MaximumRetryAttempts: 0 }
+
+  CoordinatorFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      Description: Kai - Community Coordinator agent. Urgency scoring and EDF check-in plans for group leaders
+      Handler: handlers/agents.coordinator
+      Timeout: 120
+      Policies:
+        - DynamoDBReadPolicy: { TableName: !Ref GroupsTable }
+        - DynamoDBReadPolicy: { TableName: !Ref LocationsTable }
+        - DynamoDBCrudPolicy: { TableName: !Ref AgentLogTable }
+        - !Ref BedrockInvokePolicy
+      Events:
+        ThreeHourly:
+          Type: ScheduleV2
+          Properties:
+            ScheduleExpression: cron(15 0/3 * * ? *)
+            State: !Ref AlertScheduleState
+            RetryPolicy: { MaximumRetryAttempts: 0 }
+
+  WatchdogFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      Description: Otto - Ops Watchdog agent. Probes the public URL, EWMA latency control charts, heartbeats, incidents
+      Handler: handlers/agents.watchdog
+      Timeout: 90
+      Environment:
+        Variables:
+          SITE_URL: !Sub https://${Distribution.DomainName}
+          OPS_TOPIC_ARN: !Ref OpsTopic
+          PUBLIC_API_FUNCTION: !Ref PublicApiFunction
+          ENROLLMENT_API_FUNCTION: !Ref EnrollmentApiFunction
+          ALERT_CHECK_FUNCTION: !Ref AlertCheckFunction
+      Policies:
+        - DynamoDBCrudPolicy: { TableName: !Ref AgentLogTable }
+        - SNSPublishMessagePolicy: { TopicName: !GetAtt OpsTopic.TopicName }
+        - !Ref BedrockInvokePolicy
+        - Statement:
+            - Sid: ReadOwnFunctionLogs
+              Effect: Allow
+              Action: logs:FilterLogEvents
+              Resource:
+                - !Sub arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/${PublicApiFunction}:*
+                - !Sub arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/${EnrollmentApiFunction}:*
+                - !Sub arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/${AlertCheckFunction}:*
+      Events:
+        Every15Minutes:
+          Type: ScheduleV2
+          Properties:
+            ScheduleExpression: cron(0/15 * * * ? *)
+            State: !Ref AlertScheduleState
+            RetryPolicy: { MaximumRetryAttempts: 0 }
+
+  SentinelLogs:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub /aws/lambda/${SentinelFunction}
+      RetentionInDays: 14
+  CoordinatorLogs:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub /aws/lambda/${CoordinatorFunction}
+      RetentionInDays: 14
+  WatchdogLogs:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub /aws/lambda/${WatchdogFunction}
       RetentionInDays: 14
 
   # ------------------------------------------------------------------ frontend
@@ -360,3 +494,13 @@ Outputs:
     Value: !Ref LocationsTable
   GroupsTableName:
     Value: !Ref GroupsTable
+  SentinelFunctionName:
+    Value: !Ref SentinelFunction
+  CoordinatorFunctionName:
+    Value: !Ref CoordinatorFunction
+  WatchdogFunctionName:
+    Value: !Ref WatchdogFunction
+  AgentLogTableName:
+    Value: !Ref AgentLogTable
+  OpsTopicArn:
+    Value: !Ref OpsTopic

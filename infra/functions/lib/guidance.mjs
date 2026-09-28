@@ -1,29 +1,34 @@
 /**
- * Amazon Bedrock guidance layer: turns a structured risk assessment into a short, specific,
- * localized action plan for one person.
+ * MIRA — Health Advisor agent, plus the multi-agent review loop that guards her output.
  *
- * Design decisions (see README "Why the AI layer is built this way"):
+ *   forecast → risk ──► Mira drafts (Claude Haiku 4.5 → Nova 2 Lite)
+ *                           │    facts retrieved by BM25 from a vetted CDC/NIOSH/NWS library
+ *                           ▼
+ *            ┌── Lexi (language: langid + back-translation) ──┐
+ *            └── Vera (safety: rule detectors + LLM judge) ───┘  in parallel
+ *                           │ both approve → cache + show
+ *                           │ either says "revise" → Mira rewrites once with their exact issues
+ *                           ▼ still rejected → pre-written safe guidance (never a blank screen)
+ *
+ * Design decisions (README "Why the AI layer is built this way"):
  *  1. The prompt contains ONLY enumerated / bucketed values derived from the forecast (tiers,
- *     clock hours, profile, language). No free text a user typed ever reaches the model, so
- *     there is no prompt-injection surface, and the space of distinct prompts is bounded.
- *  2. Because the input space is bounded, a cache keyed on a hash of the exact prompt inputs
- *     is always correct AND caps Bedrock spend: an attacker cannot mint unlimited cache misses.
- *  3. The model is grounded in a fixed list of public-health facts (CDC / NIOSH / NWS) and told
- *     not to invent numbers, medicines, or phone numbers.
- *  4. Output is structured JSON, validated (shape, length, script); on any failure we try the
- *     next model, then fall back to static pre-written guidance. Never a blank screen.
- *
- * Uses the Bedrock Converse API so the primary (Anthropic Claude) and fallback (Amazon Nova)
- * models share one code path.
+ *     clock hours, profile, language). No free text a user typed ever reaches a model.
+ *  2. Because the input space is bounded, a cache keyed on a hash of the prompt inputs is exact
+ *     and caps Bedrock spend. Only reviewer-APPROVED guidance is cached.
+ *  3. The writer is grounded in facts retrieved from a vetted library and told not to invent
+ *     numbers, medicines or phone numbers; the Safety Reviewer enforces it.
  */
 import { createHash } from 'node:crypto';
 import { TIER_LABELS, maxTier } from './heat.mjs';
 import { LANGUAGES, matchesScript } from './languages.mjs';
 import { fallbackGuidance } from './fallback-guidance.mjs';
+import { createBm25Index } from './algorithms/bm25.mjs';
+import { FACTS } from './agents/facts.mjs';
 
-export const PROMPT_VERSION = 'v2'; // v2: risky-hours window names its day ("now until 13:00 tomorrow")
+export const PROMPT_VERSION = 'v3'; // v3: BM25-retrieved facts + reviewer loop
 const CACHE_TTL_SECONDS = 6 * 60 * 60;
 const MODEL_TIMEOUT_MS = 9000;
+const DEFAULT_BUDGET_MS = 22_000;
 
 const PROFILE_DESCRIPTIONS = {
   outdoor_worker: 'an outdoor worker doing physical work (for example construction, farming, delivery)',
@@ -33,6 +38,31 @@ const PROFILE_DESCRIPTIONS = {
   pregnant: 'a pregnant person',
   general: 'a member of the general public',
 };
+
+// BM25 query terms per profile; situation terms are added from the forecast.
+const PROFILE_QUERY = {
+  outdoor_worker: 'worker outdoor work crew shift water rest break sun',
+  elderly: 'elderly older adult alone check home fan cool shower',
+  chronic_condition: 'chronic condition medicine heart home cooling check',
+  child: 'child infant car vehicle shade water',
+  pregnant: 'pregnant water rest cool risk',
+  general: 'general outdoor activity water shade morning evening',
+};
+
+const factIndex = createBm25Index(FACTS.filter((f) => !f.pinned), { field: (f) => `${f.text} ${f.tags}` });
+const PINNED = FACTS.filter((f) => f.pinned);
+
+/** Health Advisor retrieval step: BM25 top-k facts for this person + the pinned life-safety facts. */
+export function retrieveFacts(input, k = 6) {
+  const q = [
+    PROFILE_QUERY[input.profileId],
+    input.tropicalNight ? 'night warm sleep' : '',
+    ['high', 'very high', 'extreme'].includes(input.uv) ? 'sun midday shade' : '',
+    ['danger', 'extreme_danger'].includes(input.next12hTier) ? 'danger extreme rest break hottest hours' : '',
+    input.partOfDay === 'night' || input.partOfDay === 'evening' ? 'night evening' : 'morning',
+  ].join(' ');
+  return [...factIndex.search(q, k).map((h) => h.doc), ...PINNED];
+}
 
 function uvBucket(uv) {
   if (uv === null || uv === undefined) return 'unknown';
@@ -78,8 +108,10 @@ export function cacheKeyFor(input) {
   return createHash('sha256').update(canonical).digest('hex');
 }
 
-export function buildSystemPrompt(languageName) {
-  return `You write heat-safety action messages for HeatShield, a free public heat early-warning service.
+export const factsAsList = (facts) => facts.map((f) => `- ${f.text} (${f.source})`).join('\n');
+
+export function buildSystemPrompt(languageName, facts = [...FACTS]) {
+  return `You are Mira, HeatShield's health advisor. You write heat-safety action messages for a free public heat early-warning service.
 Each message is for one specific person and must be based only on the forecast facts you are given.
 
 Rules:
@@ -89,15 +121,8 @@ Rules:
 - Only give advice consistent with the public-health facts below. Do not invent statistics, products, medicines or phone numbers. Say "your local emergency number", never a specific number.
 - If the risk is low, say so calmly and give light precautions. Do not alarm people unnecessarily.
 
-Public-health facts you may rely on (CDC, NIOSH, US National Weather Service):
-- Heat index values assume shade. In direct sun it can feel up to about 8 °C (15 °F) hotter.
-- Workers doing moderate activity in heat: about one cup (240 ml) of water every 15 to 20 minutes. No more than about 1.5 litres (6 cups) per hour. If sweating for several hours, drinks with electrolytes help.
-- Take rest breaks in shade whenever feeling heat discomfort; as heat rises, work shorter periods and rest longer. Use a buddy system so workers watch each other for signs of heat illness.
-- People new to working in heat, or returning after time away, need to build up gradually over about two weeks.
-- Older adults should be checked on at least twice a day during heat. A fan should not be the main way to cool down when it is very hot. Cool showers or baths help. If home is hot, spend the hottest hours in an air-conditioned place such as a cooling centre.
-- Never leave a child, or anyone, in a parked vehicle.
-- Heat exhaustion signs: headache, nausea, dizziness, weakness, heavy sweating, thirst. Stop, move somewhere cooler, sip cool water, and get medical care if it does not improve.
-- Heat stroke is an emergency: confusion, slurred speech, fainting, seizures, very high body temperature, hot skin. Call the local emergency number, move the person somewhere cool, and cool them with water and cold cloths while waiting.
+Public-health facts you may rely on (retrieved for this person from HeatShield's vetted library):
+${factsAsList(facts)}
 
 Reply with ONLY a JSON object and nothing else, in exactly this shape:
 {"headline": "...", "actions": ["...", "...", "..."], "seekHelp": "..."}
@@ -109,8 +134,8 @@ All text must be in ${languageName}.`;
 
 const tierText = (t) => (t ? TIER_LABELS[t] : 'not available');
 
-export function buildUserPrompt(input) {
-  const lines = [
+export function situationLines(input) {
+  return [
     `Person: ${PROFILE_DESCRIPTIONS[input.profileId]}.`,
     `Their personal alert level starts at: ${TIER_LABELS[input.alertTier]}.`,
     `Local time now: ${String(input.localHour).padStart(2, '0')}:00 (${input.partOfDay}).`,
@@ -128,8 +153,15 @@ export function buildUserPrompt(input) {
       : 'Tonight: cools down, giving some relief overnight.',
     `Tomorrow's worst risk: ${tierText(input.tomorrowTier)}. The day after: ${tierText(input.dayAfterTier)}.`,
     `UV index today: ${input.uv}.`,
-  ];
-  return `Forecast facts for this person:\n${lines.map((l) => `- ${l}`).join('\n')}\n\nWrite their message now, in ${LANGUAGES[input.language].name}.`;
+  ].map((l) => `- ${l}`).join('\n');
+}
+
+export function buildUserPrompt(input, feedback = null) {
+  let prompt = `Forecast facts for this person:\n${situationLines(input)}\n\nWrite their message now, in ${LANGUAGES[input.language].name}.`;
+  if (feedback) {
+    prompt += `\n\nYour previous draft was sent back by HeatShield's reviewers:\n${JSON.stringify(feedback.draft)}\nFix every issue they raised:\n${feedback.issues.map((i) => `- ${i.quote ? `"${i.quote}": ` : ''}${i.problem}${i.fix ? ` Fix: ${i.fix}` : ''}`).join('\n')}\nWrite the corrected message.`;
+  }
+  return prompt;
 }
 
 const clean = (s) => (typeof s === 'string' ? s.replace(/\s+/g, ' ').trim() : '');
@@ -155,75 +187,201 @@ export function parseGuidance(text, language) {
   return guidance;
 }
 
+const summarizeReview = (r) =>
+  r
+    ? {
+        verdict: r.verdict,
+        model: r.model ?? null,
+        method: r.method ?? null,
+        issues: (r.issues ?? []).map(({ quote, problem, fix, rule }) => ({ quote, problem, fix, rule })),
+        ...(r.backTranslation ? { backTranslation: r.backTranslation } : {}),
+        ...(r.detected ? { detected: r.detected } : {}),
+        ...(r.error ? { error: r.error } : {}),
+      }
+    : null;
+
 /**
  * @param {object} deps
- * @param {(params: object, opts?: object) => Promise<object>} deps.converse  Bedrock Converse call
- * @param {{get: Function, put: Function}} deps.cache  guidance cache (DynamoDB in production)
- * @param {string[]} deps.models  model / inference-profile IDs, in preference order
- * @param {{info: Function, warn: Function}} deps.log
+ * @param {Function} deps.converse   Bedrock Converse call
+ * @param {{get: Function, put: Function}} deps.cache   guidance cache (DynamoDB in production)
+ * @param {string[]} deps.models     writer models, in preference order
+ * @param {object} [deps.reviewers]  { language, safety } reviewer agents; omit to skip review
+ * @param {object} [deps.agentLog]   records each agent's run for the Agent Console
  */
-export function createGuidanceService({ converse, cache, models, log, nowSeconds = () => Math.floor(Date.now() / 1000) }) {
-  async function callModel(modelId, input) {
-    const languageName = LANGUAGES[input.language].name;
-    const started = Date.now();
-    const res = await converse(
-      {
-        modelId,
-        system: [{ text: buildSystemPrompt(languageName) }],
-        messages: [{ role: 'user', content: [{ text: buildUserPrompt(input) }] }],
-        inferenceConfig: { maxTokens: 1000, temperature: 0.3 },
-      },
-      { abortSignal: AbortSignal.timeout(MODEL_TIMEOUT_MS) },
-    );
-    if (res.stopReason === 'max_tokens') throw new Error('Model output was truncated');
-    const text = (res.output?.message?.content ?? []).map((c) => c.text ?? '').join('');
-    const guidance = parseGuidance(text, input.language);
-    log.info('bedrock_guidance_generated', {
-      modelId,
-      language: input.language,
-      latencyMs: Date.now() - started,
-      inputTokens: res.usage?.inputTokens,
-      outputTokens: res.usage?.outputTokens,
-    });
-    return guidance;
+export function createGuidanceService({
+  converse, cache, models, log, reviewers = null, agentLog = null,
+  nowSeconds = () => Math.floor(Date.now() / 1000), nowMs = () => Date.now(),
+}) {
+  const record = (agent, run) => (agentLog ? agentLog.recordRun(agent, run).catch((err) => log.warn('agent_log_failed', { agent, message: err.message })) : null);
+
+  async function write(input, facts, deadline, feedback) {
+    let lastErr;
+    for (const modelId of models.filter(Boolean)) {
+      const started = nowMs();
+      try {
+        const timeout = Math.min(MODEL_TIMEOUT_MS, deadline - nowMs());
+        if (timeout < 1500) throw new Error('No time left to write guidance');
+        const res = await converse(
+          {
+            modelId,
+            system: [{ text: buildSystemPrompt(LANGUAGES[input.language].name, facts) }],
+            messages: [{ role: 'user', content: [{ text: buildUserPrompt(input, feedback) }] }],
+            inferenceConfig: { maxTokens: 1000, temperature: 0.3 },
+          },
+          { abortSignal: AbortSignal.timeout(timeout) },
+        );
+        if (res.stopReason === 'max_tokens') throw new Error('Model output was truncated');
+        const text = (res.output?.message?.content ?? []).map((c) => c.text ?? '').join('');
+        const guidance = parseGuidance(text, input.language);
+        const latencyMs = nowMs() - started;
+        log.info('bedrock_guidance_generated', {
+          modelId, language: input.language, latencyMs, inputTokens: res.usage?.inputTokens, outputTokens: res.usage?.outputTokens, revision: Boolean(feedback),
+        });
+        await record('mira', {
+          trigger: feedback ? 'revision' : 'new-plan',
+          outcome: 'ok',
+          durationMs: latencyMs,
+          model: modelId,
+          inputTokens: res.usage?.inputTokens ?? 0,
+          outputTokens: res.usage?.outputTokens ?? 0,
+          summary: `${feedback ? 'Revised' : 'Wrote'} a ${LANGUAGES[input.language].name} plan for ${PROFILE_DESCRIPTIONS[input.profileId].split(' (')[0]} (${TIER_LABELS[input.next12hTier]}).`,
+          detail: { language: input.language, profile: input.profileId, factsUsed: facts.map((f) => f.id), headline: guidance.headline },
+        });
+        return { guidance, model: modelId };
+      } catch (err) {
+        lastErr = err;
+        log.warn('bedrock_guidance_failed', { modelId, error: err.name, message: err.message });
+      }
+    }
+    throw lastErr ?? new Error('No writer model available');
   }
 
-  async function getGuidance(risk, language) {
+  async function review(draft, ctx) {
+    if (!reviewers) return { approved: true, skipped: true, language: null, safety: null };
+    const run = async (who, reviewer) => {
+      const started = nowMs();
+      try {
+        const r = await reviewer.review(draft, ctx);
+        await record(who, {
+          trigger: 'review',
+          outcome: r.verdict,
+          durationMs: nowMs() - started,
+          model: r.model,
+          inputTokens: r.usage?.inputTokens ?? 0,
+          outputTokens: r.usage?.outputTokens ?? 0,
+          summary: r.verdict === 'approve'
+            ? `Approved the ${LANGUAGES[ctx.language].name} plan${r.method ? ` (${r.method})` : ''}.`
+            : `Sent the ${LANGUAGES[ctx.language].name} plan back: ${r.issues.length} issue(s)${r.issues[0] ? `, e.g. ${r.issues[0].problem}` : ''}`,
+          detail: {
+            language: ctx.language,
+            verdict: r.verdict,
+            method: r.method,
+            issues: r.issues.slice(0, 4),
+            ...(r.backTranslation ? { backTranslationHeadline: r.backTranslation.headline } : {}),
+            ...(r.detected ? { detected: r.detected } : {}),
+          },
+        });
+        return r;
+      } catch (err) {
+        await record(who, { trigger: 'review', outcome: 'error', durationMs: nowMs() - started, summary: `Review failed: ${err.message}` });
+        return { verdict: 'error', error: err.message, issues: [] };
+      }
+    };
+    const [language, safety] = await Promise.all([run('lexi', reviewers.language), run('vera', reviewers.safety)]);
+    return {
+      approved: language.verdict === 'approve' && safety.verdict === 'approve',
+      rejected: language.verdict === 'revise' || safety.verdict === 'revise',
+      language,
+      safety,
+    };
+  }
+
+  async function getGuidance(risk, language, { budgetMs = DEFAULT_BUDGET_MS } = {}) {
+    const deadline = nowMs() + budgetMs;
     const input = buildGuidanceInput(risk, language);
     const key = cacheKeyFor(input);
 
     try {
       const hit = await cache.get(key);
       if (hit && hit.expiresAt > nowSeconds()) {
-        return { ...hit.guidance, language, languageFallback: false, source: 'cache', model: hit.model };
+        return {
+          ...hit.guidance, language, languageFallback: false, source: 'cache', model: hit.model,
+          review: hit.review ?? null, factsUsed: hit.factsUsed ?? [],
+        };
       }
     } catch (err) {
       log.warn('guidance_cache_read_failed', { error: err.message });
     }
 
-    for (const modelId of models.filter(Boolean)) {
+    const facts = retrieveFacts(input);
+    const ctx = {
+      language,
+      deadline,
+      factsSummary: situationLines(input),
+      factsList: factsAsList(facts),
+      situation: situationLines(input),
+    };
+    const fallback = (why, reviewResult = null) => {
+      const tier = maxTier([risk.current.tier, risk.alert.levelTier]);
+      return {
+        ...fallbackGuidance({ tier, profileId: input.profileId, language }),
+        source: 'fallback', model: null, fallbackReason: why,
+        review: reviewResult, factsUsed: facts.map((f) => f.id),
+      };
+    };
+
+    let draft;
+    try {
+      draft = await write(input, facts, deadline);
+    } catch {
+      return fallback('writer_unavailable');
+    }
+
+    let verdict = await review(draft.guidance, ctx);
+    let revised = false;
+
+    if (verdict.rejected && deadline - nowMs() > 10_000) {
+      const issues = [...(verdict.language.issues ?? []), ...(verdict.safety.issues ?? [])];
       try {
-        const guidance = await callModel(modelId, input);
-        // Awaited on purpose: Lambda may freeze the sandbox as soon as the handler returns.
-        try {
-          await cache.put({
-            cacheKey: key,
-            guidance,
-            model: modelId,
-            createdAt: nowSeconds(),
-            expiresAt: nowSeconds() + CACHE_TTL_SECONDS,
-          });
-        } catch (err) {
-          log.warn('guidance_cache_write_failed', { error: err.message });
-        }
-        return { ...guidance, language, languageFallback: false, source: 'bedrock', model: modelId };
-      } catch (err) {
-        log.warn('bedrock_guidance_failed', { modelId, error: err.name, message: err.message });
+        draft = await write(input, facts, deadline, { draft: draft.guidance, issues });
+        revised = true;
+        verdict = await review(draft.guidance, ctx);
+      } catch {
+        return fallback('revision_failed', { status: 'rejected', language: summarizeReview(verdict.language), safety: summarizeReview(verdict.safety) });
       }
     }
 
-    const tier = maxTier([risk.current.tier, risk.alert.levelTier]);
-    return { ...fallbackGuidance({ tier, profileId: input.profileId, language }), source: 'fallback', model: null };
+    const reviewSummary = {
+      status: verdict.skipped ? 'skipped' : verdict.approved ? 'approved' : verdict.rejected ? 'rejected' : 'unreviewed',
+      revised,
+      language: summarizeReview(verdict.language),
+      safety: summarizeReview(verdict.safety),
+    };
+
+    if (verdict.rejected) return fallback('reviewers_rejected', reviewSummary);
+
+    // Only approved (or review-skipped) guidance is cached; "unreviewed" (a reviewer was down) is
+    // shown with an honest label and retried on the next request.
+    if (verdict.approved || verdict.skipped) {
+      try {
+        await cache.put({
+          cacheKey: key,
+          guidance: draft.guidance,
+          model: draft.model,
+          review: reviewSummary,
+          factsUsed: facts.map((f) => f.id),
+          createdAt: nowSeconds(),
+          expiresAt: nowSeconds() + CACHE_TTL_SECONDS,
+        });
+      } catch (err) {
+        log.warn('guidance_cache_write_failed', { error: err.message });
+      }
+    }
+
+    return {
+      ...draft.guidance, language, languageFallback: false, source: 'bedrock', model: draft.model,
+      review: reviewSummary, factsUsed: facts.map((f) => f.id),
+    };
   }
 
   return { getGuidance };

@@ -25,8 +25,13 @@ export function parseLanguage(value) {
   return lang;
 }
 
-export function createPublicApi({ weather, guidance, version, region }) {
+export function createPublicApi({ weather, guidance, version, region, agentsApi = null }) {
   return router({
+    'GET /api/agents': async () => {
+      if (!agentsApi) return json(404, { error: { code: 'not_found', message: 'No such route' } });
+      return json(200, await agentsApi.get());
+    },
+
     'GET /api/health': async () =>
       json(200, { ok: true, service: 'heatshield-api', version, region, time: new Date().toISOString() }),
 

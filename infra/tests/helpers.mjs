@@ -5,6 +5,7 @@ const KEYS = {
   locations: ['locationId'],
   alerts: ['locationId', 'alertDate'],
   guidanceCache: ['cacheKey'],
+  agentLog: ['pk', 'sk'],
 };
 
 function conditionalError() {
@@ -25,8 +26,8 @@ function evaluate(condition, existing, values = {}) {
 }
 
 export function createFakeDb() {
-  const data = { groups: new Map(), locations: new Map(), alerts: new Map(), guidanceCache: new Map() };
-  const tables = { groups: 'groups', locations: 'locations', alerts: 'alerts', guidanceCache: 'guidanceCache' };
+  const data = { groups: new Map(), locations: new Map(), alerts: new Map(), guidanceCache: new Map(), agentLog: new Map() };
+  const tables = { groups: 'groups', locations: 'locations', alerts: 'alerts', guidanceCache: 'guidanceCache', agentLog: 'agentLog' };
   const keyOf = (table, obj) => KEYS[table].map((k) => obj[k]).join('|');
   const clone = (x) => (x ? structuredClone(x) : null);
 
@@ -54,6 +55,10 @@ export function createFakeDb() {
     },
     async query({ table, index, values, limit = 100, forward = true }) {
       let items = [...data[table].values()];
+      if (table === 'agentLog') {
+        items = items.filter((i) => i.pk === values[':p']).sort((a, b) => a.sk.localeCompare(b.sk) * (forward ? 1 : -1));
+        return items.slice(0, limit).map(clone);
+      }
       if (index === 'byGroup') items = items.filter((i) => i.groupId === values[':g']);
       else items = items.filter((i) => i.locationId === values[':l']);
       if (table === 'alerts') items.sort((a, b) => a.alertDate.localeCompare(b.alertDate) * (forward ? 1 : -1));

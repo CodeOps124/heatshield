@@ -99,6 +99,37 @@ export function createWeatherClient({ fetchImpl = globalThis.fetch, now = () => 
     return value;
   }
 
+  /**
+   * Daily max/min for the past 31 days, today and 6 more days — what the Excess Heat Factor needs
+   * (30 days of history for acclimatisation + a 3-day window ahead).
+   */
+  async function getDaily(lat, lon) {
+    const key = `daily:${roundCoord(lat)},${roundCoord(lon)}`;
+    const hit = cache.get(key);
+    if (hit && now() - hit.at < CACHE_TTL_MS) return hit.value;
+    const params = new URLSearchParams({
+      latitude: String(roundCoord(lat)),
+      longitude: String(roundCoord(lon)),
+      daily: 'temperature_2m_max,temperature_2m_min',
+      past_days: '31',
+      forecast_days: '7',
+      timezone: 'auto',
+    });
+    const json = await getJson(`${FORECAST_URL}?${params}`, fetchImpl);
+    if (!Array.isArray(json?.daily?.time)) throw new UpstreamError('Unexpected daily payload');
+    const today = new Date(now() + (json.utc_offset_seconds ?? 0) * 1000).toISOString().slice(0, 10);
+    const value = {
+      dates: json.daily.time,
+      tmax: json.daily.temperature_2m_max,
+      tmin: json.daily.temperature_2m_min,
+      today,
+      timezone: json.timezone,
+    };
+    if (cache.size >= CACHE_MAX) cache.delete(cache.keys().next().value);
+    cache.set(key, { at: now(), value });
+    return value;
+  }
+
   async function geocode(query, language = 'en') {
     const params = new URLSearchParams({ name: query, count: '6', language, format: 'json' });
     const json = await getJson(`${GEOCODE_URL}?${params}`, fetchImpl);
@@ -114,5 +145,5 @@ export function createWeatherClient({ fetchImpl = globalThis.fetch, now = () => 
     }));
   }
 
-  return { getForecast, geocode };
+  return { getForecast, getDaily, geocode };
 }

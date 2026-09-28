@@ -14,7 +14,8 @@
  * sent in headers (the frontend keeps them in the URL #fragment, which browsers never send
  * to servers or leak via Referer).
  */
-import { assessRisk, PROFILES, TIERS } from './heat.mjs';
+import { PROFILES, TIERS } from './heat.mjs';
+import { riskForMany } from './risk-batch.mjs';
 import { isLanguage } from './languages.mjs';
 import { roundCoord } from './weather.mjs';
 import { HttpError, json, parseBody, header, router } from './http.mjs';
@@ -29,24 +30,6 @@ function pathId(event, name) {
   const id = event.pathParameters?.[name];
   if (!id || !ID_RE.test(id)) throw new HttpError(404, 'not_found', 'Not found');
   return id;
-}
-
-/** Live risk for many locations, fetching each distinct ~1 km grid cell only once. */
-async function riskForMany(weather, locations) {
-  const cells = [...new Set(locations.map((l) => `${l.lat},${l.lon}`))];
-  const forecasts = new Map();
-  await mapLimit(cells, 6, async (cell) => {
-    const [lat, lon] = cell.split(',').map(Number);
-    try {
-      forecasts.set(cell, await weather.getForecast(lat, lon));
-    } catch (err) {
-      log.warn('dashboard_forecast_failed', { cell, message: err.message });
-    }
-  });
-  return locations.map((l) => {
-    const f = forecasts.get(`${l.lat},${l.lon}`);
-    return f ? assessRisk(f, l.profile) : null;
-  });
 }
 
 function summarizeRisk(risk) {
@@ -66,7 +49,28 @@ function summarizeRisk(risk) {
   };
 }
 
-export function createEnrollmentApi({ store, notifier, weather, now = () => Date.now() }) {
+const PLAN_COOLDOWN_MS = 10 * 60_000;
+
+/** Kai's latest plan for a group, with pseudonymous locationIds mapped back to member names. */
+async function coordinatorPlan(agentLog, groupId, members) {
+  if (!agentLog) return null;
+  const plan = await agentLog.getState('kai', `group#${groupId}`).catch(() => null);
+  if (!plan) return null;
+  const names = new Map(members.map((m) => [m.locationId, m.name]));
+  return {
+    generatedAt: plan.updatedAt,
+    allClear: plan.allClear,
+    summary: plan.summary,
+    teamNote: plan.teamNote,
+    model: plan.model,
+    heatEvents: plan.heatEvents ?? [],
+    checkIns: (plan.checkIns ?? [])
+      .filter((c) => names.has(c.locationId))
+      .map((c) => ({ ...c, name: names.get(c.locationId) })),
+  };
+}
+
+export function createEnrollmentApi({ store, notifier, weather, agentLog = null, requestPlan = null, now = () => Date.now() }) {
   async function requireGroupAdmin(event) {
     const groupId = pathId(event, 'groupId');
     const group = await store.getGroup(groupId);
@@ -163,8 +167,24 @@ export function createEnrollmentApi({ store, notifier, weather, now = () => Date
         group: { groupId: group.groupId, name: group.name, createdAt: group.createdAt, readOnly: Boolean(group.readOnly) },
         summary: { members: rows.length, needAttention, byTier },
         members: rows,
+        coordinator: await coordinatorPlan(agentLog, group.groupId, members),
         generatedAt: new Date(now()).toISOString(),
       });
+    },
+
+    // Ask Kai (Community Coordinator agent) to re-plan this group's check-ins now.
+    'POST /api/groups/{groupId}/plan': async (event) => {
+      const group = await requireGroupAdmin(event);
+      if (!requestPlan || !agentLog) throw new HttpError(503, 'unavailable', 'The coordinator is not available.');
+      const existing = await agentLog.getState('kai', `group#${group.groupId}`).catch(() => null);
+      const age = existing?.updatedAt ? now() - Date.parse(existing.updatedAt) : Infinity;
+      if (age < PLAN_COOLDOWN_MS) {
+        const wait = Math.ceil((PLAN_COOLDOWN_MS - age) / 60_000);
+        throw new HttpError(429, 'cooldown', `Kai re-planned this group ${Math.floor(age / 60_000)} min ago. You can ask again in ${wait} min.`);
+      }
+      await requestPlan(group.groupId);
+      const members = await store.listGroupMembers(group.groupId);
+      return json(200, { coordinator: await coordinatorPlan(agentLog, group.groupId, members) });
     },
 
     'DELETE /api/groups/{groupId}/members/{locationId}': async (event) => {

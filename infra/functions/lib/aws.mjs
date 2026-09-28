@@ -11,6 +11,8 @@ import { BedrockRuntimeClient, ConverseCommand } from '@aws-sdk/client-bedrock-r
 import {
   SNSClient, SubscribeCommand, UnsubscribeCommand, PublishCommand, GetSubscriptionAttributesCommand,
 } from '@aws-sdk/client-sns';
+import { CloudWatchLogsClient, FilterLogEventsCommand } from '@aws-sdk/client-cloudwatch-logs';
+import { LambdaClient, InvokeCommand } from '@aws-sdk/client-lambda';
 
 const doc = DynamoDBDocumentClient.from(new DynamoDBClient({}), {
   marshallOptions: { removeUndefinedValues: true },
@@ -128,6 +130,64 @@ export const tables = {
   locations: process.env.LOCATIONS_TABLE,
   alerts: process.env.ALERTS_TABLE,
   guidanceCache: process.env.GUIDANCE_CACHE_TABLE,
+  agentLog: process.env.AGENT_LOG_TABLE,
 };
 
 export const models = [process.env.BEDROCK_MODEL_ID, process.env.BEDROCK_FALLBACK_MODEL_ID].filter(Boolean);
+/** Tool-using agents (Sol, Kai, Otto) and the reviewers (Lexi, Vera; a different model family from the writer). */
+export const agentModels = [process.env.AGENT_MODEL_ID, process.env.BEDROCK_FALLBACK_MODEL_ID].filter(Boolean);
+export const reviewerModels = [process.env.REVIEWER_MODEL_ID, process.env.AGENT_MODEL_ID].filter(Boolean);
+
+// ---------------------------------------------------------------- CloudWatch Logs (Otto)
+const cwl = new CloudWatchLogsClient({});
+
+function sanitizeLogLine(message) {
+  const text = String(message ?? '').trim();
+  const brace = text.indexOf('{');
+  if (brace !== -1) {
+    try {
+      const j = JSON.parse(text.slice(brace));
+      const keep = ['level', 'msg', 'message', 'error', 'name', 'route', 'modelId', 'code'];
+      return JSON.stringify(Object.fromEntries(keep.filter((k) => j[k] !== undefined).map((k) => [k, String(j[k]).slice(0, 200)])));
+    } catch { /* not JSON */ }
+  }
+  return text.slice(0, 240);
+}
+
+export const logs = {
+  /** Count matching log events since `startMs` (capped at 5 pages). */
+  async count(logGroupName, filterPattern, startMs) {
+    let total = 0;
+    let nextToken;
+    for (let page = 0; page < 5; page += 1) {
+      const res = await cwl.send(new FilterLogEventsCommand({ logGroupName, filterPattern, startTime: startMs, nextToken, limit: 1000 }));
+      total += res.events?.length ?? 0;
+      nextToken = res.nextToken;
+      if (!nextToken) break;
+    }
+    return total;
+  },
+  /** Most recent matching lines, reduced to non-sensitive fields. */
+  async sample(logGroupName, filterPattern, startMs, limit = 8) {
+    const res = await cwl.send(new FilterLogEventsCommand({ logGroupName, filterPattern, startTime: startMs, limit: 50 }));
+    return (res.events ?? []).slice(-limit).map((e) => ({ at: new Date(e.timestamp).toISOString(), line: sanitizeLogLine(e.message) }));
+  },
+};
+
+export const opsPublish = async (subject, message) => {
+  if (!process.env.OPS_TOPIC_ARN) return;
+  await sns.send(new PublishCommand({ TopicArn: process.env.OPS_TOPIC_ARN, Subject: subject, Message: message }));
+};
+
+// ---------------------------------------------------------------- Lambda invoke (on-demand coordinator)
+const lambda = new LambdaClient({});
+export async function invokeCoordinator(groupId) {
+  const res = await lambda.send(new InvokeCommand({
+    FunctionName: process.env.COORDINATOR_FUNCTION,
+    InvocationType: 'RequestResponse',
+    Payload: Buffer.from(JSON.stringify({ groupId, trigger: 'leader-request' })),
+  }));
+  const body = res.Payload ? JSON.parse(Buffer.from(res.Payload).toString('utf8') || 'null') : null;
+  if (res.FunctionError) throw new Error(body?.errorMessage ?? 'Coordinator failed');
+  return body;
+}

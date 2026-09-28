@@ -224,6 +224,7 @@ export function assessRisk(forecast, profileId) {
 
   return {
     timezone: forecast.timezone,
+    utcOffsetSeconds: forecast.utcOffsetSeconds ?? 0,
     localTime: current.time,
     localHour,
     partOfDay: partOfDay(localHour),

@@ -1,0 +1,128 @@
+/**
+ * A small, auditable agent loop on the Amazon Bedrock Converse API (tool use).
+ *
+ * An agent = a role-specific system prompt + a set of tools (JSON-schema'd functions) + a model
+ * chain. The MODEL decides which tools to call and when it has enough to answer; the runtime only
+ * executes tools, enforces limits (turns, deadline, output size) and records what happened.
+ *
+ *   user input ──► model ──tool_use──► run tools ──toolResult──► model ──end_turn──► answer
+ *
+ * Every run is recorded (agent, trigger, model, turns, tool calls, tokens, outcome) so the public
+ * Agent Console can show that the agents really are working, and what they decided.
+ */
+
+const MAX_TOOL_RESULT_CHARS = 12_000;
+
+export class AgentError extends Error {
+  constructor(message, { code = 'agent_error', cause } = {}) {
+    super(message, { cause });
+    this.name = 'AgentError';
+    this.code = code;
+  }
+}
+
+const toolSpec = (t) => ({
+  toolSpec: { name: t.name, description: t.description, inputSchema: { json: t.inputSchema } },
+});
+
+/** Converse tool results must be JSON objects; arrays/primitives are wrapped. Oversized results are truncated. */
+function asToolJson(value) {
+  const obj = value !== null && typeof value === 'object' && !Array.isArray(value) ? value : { result: value };
+  const text = JSON.stringify(obj);
+  if (text.length <= MAX_TOOL_RESULT_CHARS) return obj;
+  return { truncated: true, preview: text.slice(0, MAX_TOOL_RESULT_CHARS) };
+}
+
+/** Pull the first JSON object out of model text (tolerates ```json fences and prose around it). */
+export function extractJson(text) {
+  if (typeof text !== 'string') throw new AgentError('Model returned no text', { code: 'no_text' });
+  const start = text.indexOf('{');
+  const end = text.lastIndexOf('}');
+  if (start === -1 || end <= start) throw new AgentError('Model output contained no JSON object', { code: 'no_json' });
+  try {
+    return JSON.parse(text.slice(start, end + 1));
+  } catch (err) {
+    throw new AgentError(`Model output was not valid JSON: ${err.message}`, { code: 'bad_json' });
+  }
+}
+
+/**
+ * Run one agent to completion.
+ *
+ * @param {object} p
+ * @param {object} p.agent       { name, system, tools?: [{name, description, inputSchema, handler}], models: string[],
+ *                                 maxTurns?, maxTokens?, temperature? }
+ * @param {string} p.input       the task, as text
+ * @param {Function} p.converse  (params, opts) => Bedrock Converse response
+ * @param {number} [p.deadline]  epoch ms; the run is abandoned after this
+ * @returns {{ text, model, turns, toolCalls, usage, stopReason }}
+ */
+export async function runAgent({ agent, input, converse, deadline = Date.now() + 20_000, now = Date.now }) {
+  const tools = agent.tools ?? [];
+  const byName = new Map(tools.map((t) => [t.name, t]));
+  const maxTurns = agent.maxTurns ?? 6;
+  const usage = { inputTokens: 0, outputTokens: 0 };
+  const toolCalls = [];
+  let lastError;
+
+  // Model chain: fall back to the next model only if the FIRST call fails (switching models mid
+  // conversation would mix tool-use ids between providers).
+  for (const modelId of agent.models.filter(Boolean)) {
+    const messages = [{ role: 'user', content: [{ text: input }] }];
+    try {
+      for (let turn = 1; turn <= maxTurns; turn += 1) {
+        const remaining = deadline - now();
+        if (remaining < 1500) throw new AgentError('Agent ran out of time', { code: 'deadline' });
+        const res = await converse(
+          {
+            modelId,
+            system: [{ text: agent.system }],
+            messages,
+            ...(tools.length ? { toolConfig: { tools: tools.map(toolSpec) } } : {}),
+            inferenceConfig: { maxTokens: agent.maxTokens ?? 1200, temperature: agent.temperature ?? 0 },
+          },
+          { abortSignal: AbortSignal.timeout(remaining) },
+        );
+        usage.inputTokens += res.usage?.inputTokens ?? 0;
+        usage.outputTokens += res.usage?.outputTokens ?? 0;
+        const message = res.output?.message;
+        if (!message) throw new AgentError('Empty model response', { code: 'empty' });
+        messages.push(message);
+
+        if (res.stopReason === 'tool_use') {
+          const results = [];
+          for (const block of message.content ?? []) {
+            if (!block.toolUse) continue;
+            const { toolUseId, name, input: args } = block.toolUse;
+            const tool = byName.get(name);
+            const started = now();
+            let status = 'success';
+            let content;
+            try {
+              if (!tool) throw new Error(`Unknown tool "${name}"`);
+              // Treat model-generated arguments as untrusted input; handlers validate their own args.
+              content = asToolJson(await tool.handler(args ?? {}));
+            } catch (err) {
+              status = 'error';
+              content = { error: err.message };
+            }
+            toolCalls.push({ name, ok: status === 'success', ms: now() - started });
+            results.push({ toolResult: { toolUseId, content: [{ json: content }], status } });
+          }
+          messages.push({ role: 'user', content: results });
+          continue;
+        }
+
+        if (res.stopReason === 'max_tokens') throw new AgentError('Agent output was truncated', { code: 'truncated' });
+        const text = (message.content ?? []).map((c) => c.text ?? '').join('').trim();
+        return { text, model: modelId, turns: turn, toolCalls, usage, stopReason: res.stopReason };
+      }
+      throw new AgentError(`Agent did not finish within ${maxTurns} turns`, { code: 'max_turns' });
+    } catch (err) {
+      lastError = err;
+      const firstCallFailed = toolCalls.length === 0 && !(err instanceof AgentError && err.code === 'deadline');
+      if (!firstCallFailed) break; // mid-run failure: do not restart on another model
+    }
+  }
+  throw lastError ?? new AgentError('No model available', { code: 'no_model' });
+}
