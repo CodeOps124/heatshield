@@ -1,0 +1,56 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>My HeatShield</title>
+  <meta name="robots" content="noindex">
+  <meta name="referrer" content="no-referrer">
+  <link rel="icon" href="/favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="/css/styles.css">
+  <script src="/js/theme.js"></script>
+  <script type="module" src="/js/me.js"></script>
+</head>
+<body>
+  <a class="skip-link" href="#main">Skip to content</a>
+  <header class="site-header">
+    <div class="wrap">
+      <a class="brand" href="/" aria-label="HeatShield home">
+        <svg viewBox="0 0 32 32" aria-hidden="true"><path d="M16 2.5l11 4v8.3c0 6.6-4.6 11.5-11 13.2C9.6 26.3 5 21.4 5 14.8V6.5z" fill="#eb6834"/><path d="M16 9v8.2" stroke="#fff" stroke-width="2.6" stroke-linecap="round"/><circle cx="16" cy="21" r="2.4" fill="#fff"/></svg>
+        HeatShield
+      </a>
+      <nav class="nav" aria-label="Main">
+        <a href="/#check">Check risk</a>
+        <button class="theme-toggle" id="theme-toggle" type="button" aria-label="Toggle theme"></button>
+      </nav>
+    </div>
+  </header>
+
+  <main id="main" class="wrap section">
+    <h1 id="title">My HeatShield</h1>
+    <div id="status"></div>
+    <div id="content" hidden>
+      <div class="grid-2">
+        <div class="stack">
+          <div class="card" id="risk-card"></div>
+          <div class="card"><h2>Next 24 hours</h2><div id="chart"></div></div>
+        </div>
+        <div class="stack">
+          <div class="card">
+            <div class="guidance-head"><h2>Your action plan</h2></div>
+            <div id="guidance" aria-live="polite"></div>
+          </div>
+          <div class="card" id="details"></div>
+        </div>
+      </div>
+    </div>
+  </main>
+
+  <footer class="site-footer">
+    <div class="wrap">
+      <p><strong>HeatShield gives safety information, not medical care.</strong> In an emergency, call your local emergency number.</p>
+      <p class="version" id="version"></p>
+    </div>
+  </footer>
+</body>
+</html>

@@ -1,0 +1,73 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Group dashboard · HeatShield</title>
+  <meta name="robots" content="noindex">
+  <meta name="referrer" content="no-referrer">
+  <link rel="icon" href="/favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="/css/styles.css">
+  <script src="/js/theme.js"></script>
+  <script type="module" src="/js/group.js"></script>
+</head>
+<body>
+  <a class="skip-link" href="#main">Skip to content</a>
+  <header class="site-header">
+    <div class="wrap">
+      <a class="brand" href="/" aria-label="HeatShield home">
+        <svg viewBox="0 0 32 32" aria-hidden="true"><path d="M16 2.5l11 4v8.3c0 6.6-4.6 11.5-11 13.2C9.6 26.3 5 21.4 5 14.8V6.5z" fill="#eb6834"/><path d="M16 9v8.2" stroke="#fff" stroke-width="2.6" stroke-linecap="round"/><circle cx="16" cy="21" r="2.4" fill="#fff"/></svg>
+        HeatShield
+      </a>
+      <nav class="nav" aria-label="Main">
+        <a href="/#check">Check risk</a>
+        <button class="theme-toggle" id="theme-toggle" type="button" aria-label="Toggle theme"></button>
+      </nav>
+    </div>
+  </header>
+
+  <main id="main" class="wrap section">
+    <div class="result-head">
+      <div>
+        <p class="hint" id="eyebrow">Group dashboard</p>
+        <h1 id="group-name">Loading…</h1>
+        <p class="place-meta" id="updated"></p>
+      </div>
+      <button class="btn secondary small" id="refresh" type="button">Refresh</button>
+    </div>
+    <div id="status" class="mt-16"></div>
+
+    <div id="dashboard" hidden>
+      <div class="summary-tiles mt-16" id="summary"></div>
+      <div class="card mt-16" id="invite-card" hidden></div>
+      <div class="card mt-16">
+        <h2>Members</h2>
+        <p class="hint">Sorted by the worst heat each person faces in the next 12 hours, judged against their own profile. Live forecast, refreshed every 10 minutes.</p>
+        <div class="table-scroll">
+          <table class="data-table" id="members">
+            <thead>
+              <tr>
+                <th scope="col">Member</th>
+                <th scope="col">Now</th>
+                <th scope="col">Next 12 hours</th>
+                <th scope="col">Peak (24 h)</th>
+                <th scope="col">Alerts</th>
+                <th scope="col"><span class="visually-hidden">Actions</span></th>
+              </tr>
+            </thead>
+            <tbody></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  </main>
+
+  <footer class="site-footer">
+    <div class="wrap">
+      <p>This page is private to whoever holds the dashboard link. Member contact details are never shown here or stored by HeatShield.</p>
+      <p>Weather data by <a href="https://open-meteo.com/" rel="noopener">Open-Meteo.com</a> (CC BY 4.0). Heat index: US National Weather Service.</p>
+      <p class="version" id="version"></p>
+    </div>
+  </footer>
+</body>
+</html>

@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Join a group · HeatShield</title>
+  <meta name="robots" content="noindex">
+  <meta name="referrer" content="no-referrer">
+  <link rel="icon" href="/favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="/css/styles.css">
+  <script src="/js/theme.js"></script>
+  <script type="module" src="/js/join.js"></script>
+</head>
+<body>
+  <a class="skip-link" href="#main">Skip to content</a>
+  <header class="site-header">
+    <div class="wrap">
+      <a class="brand" href="/" aria-label="HeatShield home">
+        <svg viewBox="0 0 32 32" aria-hidden="true"><path d="M16 2.5l11 4v8.3c0 6.6-4.6 11.5-11 13.2C9.6 26.3 5 21.4 5 14.8V6.5z" fill="#eb6834"/><path d="M16 9v8.2" stroke="#fff" stroke-width="2.6" stroke-linecap="round"/><circle cx="16" cy="21" r="2.4" fill="#fff"/></svg>
+        HeatShield
+      </a>
+      <nav class="nav" aria-label="Main">
+        <button class="theme-toggle" id="theme-toggle" type="button" aria-label="Toggle theme"></button>
+      </nav>
+    </div>
+  </header>
+
+  <main id="main" class="wrap section">
+    <p class="hint">You have been invited to</p>
+    <h1 id="group-name">Loading…</h1>
+    <p class="lede section-sub">Your group leader will see your name, your area and your heat risk, so they can check on you when it gets dangerous. They will never see your email address. You also get your own alerts, in your language.</p>
+    <div id="status"></div>
+    <div class="card" id="join-card" hidden>
+      <div id="place-search"></div>
+      <div id="register" class="mt-16"></div>
+    </div>
+  </main>
+
+  <footer class="site-footer">
+    <div class="wrap">
+      <p><strong>HeatShield gives safety information, not medical care.</strong> In an emergency, call your local emergency number.</p>
+      <p class="version" id="version"></p>
+    </div>
+  </footer>
+</body>
+</html>

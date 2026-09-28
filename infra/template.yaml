@@ -345,3 +345,5 @@ Outputs:
     Value: !Ref AlertsTopic
   LocationsTableName:
     Value: !Ref LocationsTable
+  GroupsTableName:
+    Value: !Ref GroupsTable

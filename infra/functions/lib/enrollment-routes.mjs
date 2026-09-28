@@ -118,7 +118,7 @@ export function createEnrollmentApi({ store, notifier, weather, now = () => Date
     'GET /api/groups/{groupId}': async (event) => {
       const group = await store.getGroup(pathId(event, 'groupId'));
       if (!group) throw new HttpError(404, 'not_found', 'This invite link is not valid.');
-      return json(200, { groupId: group.groupId, name: group.name });
+      return json(200, { groupId: group.groupId, name: group.name, readOnly: Boolean(group.readOnly) });
     },
 
     'GET /api/groups/{groupId}/dashboard': async (event) => {
@@ -160,7 +160,7 @@ export function createEnrollmentApi({ store, notifier, weather, now = () => Date
       }
 
       return json(200, {
-        group: { groupId: group.groupId, name: group.name, createdAt: group.createdAt },
+        group: { groupId: group.groupId, name: group.name, createdAt: group.createdAt, readOnly: Boolean(group.readOnly) },
         summary: { members: rows.length, needAttention, byTier },
         members: rows,
         generatedAt: new Date(now()).toISOString(),
@@ -169,6 +169,7 @@ export function createEnrollmentApi({ store, notifier, weather, now = () => Date
 
     'DELETE /api/groups/{groupId}/members/{locationId}': async (event) => {
       const group = await requireGroupAdmin(event);
+      if (group.readOnly) throw new HttpError(403, 'read_only', 'This demo group is read-only.');
       const location = await store.getLocation(pathId(event, 'locationId'));
       if (!location || location.groupId !== group.groupId) throw new HttpError(404, 'not_found', 'Member not found');
       await removeLocation(location);
@@ -196,6 +197,7 @@ export function createEnrollmentApi({ store, notifier, weather, now = () => Date
         if (typeof body.groupId !== 'string' || !ID_RE.test(body.groupId)) throw new ValidationError('Invalid group');
         const group = await store.getGroup(body.groupId);
         if (!group) throw new HttpError(404, 'not_found', 'This invite link is not valid.');
+        if (group.readOnly) throw new HttpError(403, 'read_only', 'This demo group is read-only and cannot take new members.');
         const members = await store.listGroupMembers(group.groupId);
         if (members.length >= MAX_GROUP_MEMBERS) {
           throw new HttpError(409, 'group_full', `This group already has ${MAX_GROUP_MEMBERS} members.`);
@@ -252,7 +254,9 @@ export function createEnrollmentApi({ store, notifier, weather, now = () => Date
           emailStatus,
           group: group ? { groupId: group.groupId, name: group.name } : null,
         },
-        lastAlert,
+        lastAlert: lastAlert
+          ? { date: lastAlert.alertDate, tier: lastAlert.tier, status: lastAlert.status, sentAt: lastAlert.sentAt ?? null }
+          : null,
       });
     },
 

@@ -1,0 +1,141 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>HeatShield — heat early warning, in your language</title>
+  <meta name="description" content="Free heat early warning for outdoor workers, older adults and anyone without reliable cooling. Live forecast, NWS heat science and AI action plans in 13 languages, built on AWS.">
+  <meta property="og:title" content="HeatShield — heat early warning, in your language">
+  <meta property="og:description" content="A weather app tells you the temperature. HeatShield tells you what to do about it, for your body and your job, in your language.">
+  <meta name="theme-color" content="#0b0b0b">
+  <link rel="icon" href="/favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="/css/styles.css">
+  <script src="/js/theme.js"></script>
+  <script type="module" src="/js/app.js"></script>
+</head>
+<body>
+  <a class="skip-link" href="#main">Skip to content</a>
+  <header class="site-header">
+    <div class="wrap">
+      <a class="brand" href="/" aria-label="HeatShield home">
+        <svg viewBox="0 0 32 32" aria-hidden="true"><path d="M16 2.5l11 4v8.3c0 6.6-4.6 11.5-11 13.2C9.6 26.3 5 21.4 5 14.8V6.5z" fill="#eb6834"/><path d="M16 9v8.2" stroke="#fff" stroke-width="2.6" stroke-linecap="round"/><circle cx="16" cy="21" r="2.4" fill="#fff"/></svg>
+        HeatShield
+      </a>
+      <nav class="nav" aria-label="Main">
+        <a href="#check">Check risk</a>
+        <a class="hide-sm" href="#groups">Protect a group</a>
+        <a class="hide-sm" href="#how">How it works</a>
+        <button class="theme-toggle" id="theme-toggle" type="button" aria-label="Toggle theme"></button>
+      </nav>
+    </div>
+  </header>
+
+  <main id="main">
+    <section class="hero wrap">
+      <span class="eyebrow">Free · 13 languages · live on AWS</span>
+      <h1>A weather app tells you it’s 41&nbsp;°C.<br>HeatShield tells you what to do about it.</h1>
+      <p class="lede">Heat is linked to an estimated 489,000 deaths a year. The people most at risk — outdoor workers, older adults, anyone without reliable cooling — rarely get a warning that is specific to their body, their job and their language. HeatShield turns the forecast into a personal action plan and warns you before the hottest hours arrive.</p>
+    </section>
+
+    <section class="wrap" id="check" aria-labelledby="check-title">
+      <div class="card">
+        <h2 id="check-title" class="visually-hidden">Check your heat risk</h2>
+        <form id="check-form" class="stack" novalidate>
+          <div id="place-search"></div>
+          <div id="check-profile"></div>
+          <div class="form-grid cols-2">
+            <div>
+              <label for="check-lang">Language for your action plan</label>
+              <div id="check-lang-slot"></div>
+            </div>
+            <div class="row align-end">
+              <button class="btn" id="check-submit" type="submit">Check my heat risk</button>
+            </div>
+          </div>
+        </form>
+        <div class="try-row" id="try-row"><span>Or try a live example:</span></div>
+        <div id="check-error" class="mt-16"></div>
+      </div>
+
+      <div id="result" class="mt-16" hidden>
+        <div class="grid-2">
+          <div class="stack">
+            <div class="card" id="risk-card" aria-live="polite"></div>
+            <div class="card">
+              <h2>Next 24 hours</h2>
+              <p class="hint">Heat index in the shade. Direct sun can make it feel up to 8 °C (15 °F) hotter.</p>
+              <div id="chart"></div>
+            </div>
+            <div class="card">
+              <h2>Coming days</h2>
+              <div id="outlook"></div>
+            </div>
+          </div>
+          <div class="stack">
+            <div class="card">
+              <div class="guidance-head">
+                <h2>Your action plan</h2>
+                <div class="lang-select"><label for="guidance-lang">Language</label><span id="guidance-lang-slot"></span></div>
+              </div>
+              <div id="guidance" aria-live="polite"></div>
+            </div>
+            <div class="card" id="alerts-card">
+              <h2>Get warned automatically</h2>
+              <p class="hint">HeatShield re-checks the forecast every hour and emails you in your language when heat reaches your personal alert level. At most one alert per level per day, never between 21:00 and 06:00 your time.</p>
+              <div id="register"></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="section wrap" id="groups" aria-labelledby="groups-title">
+      <h2 id="groups-title" class="section-title">One person can watch out for a whole group</h2>
+      <p class="section-sub">A site foreman, a teacher, a clinic outreach worker or a neighbour checking on older residents creates a group, shares one invite link, and sees everyone’s heat risk on a single private dashboard — who is in danger now, and when it peaks. Each member still gets their own alerts in their own language.</p>
+      <div class="grid-2">
+        <div class="card">
+          <h3>Create a group</h3>
+          <form id="group-form" class="stack" novalidate>
+            <div>
+              <label for="group-name">Group name</label>
+              <input id="group-name" type="text" maxlength="60" placeholder="e.g. Site 4 night crew, Maple St seniors" required>
+            </div>
+            <button class="btn" type="submit">Create group</button>
+          </form>
+          <div id="group-result" aria-live="polite"></div>
+        </div>
+        <div class="card">
+          <h3>See it working</h3>
+          <p>The demo dashboard follows a fictional group spread across real hot places, with live forecasts. It is read-only.</p>
+          <p><a class="btn secondary" id="demo-link" href="/group.html">Open the live demo dashboard</a></p>
+          <p class="hint">No accounts or passwords: groups use a private dashboard link that only the leader holds.</p>
+        </div>
+      </div>
+    </section>
+
+    <section class="section wrap" id="how" aria-labelledby="how-title">
+      <h2 id="how-title" class="section-title">How it works</h2>
+      <p class="section-sub">Real weather, real heat science, and generative AI used for the part that matters most: turning a number into a plan a person will actually follow.</p>
+      <ol class="steps">
+        <li><span class="n">1 · Forecast</span><h3>Live hourly weather</h3><p>Temperature and humidity for the next four days from Open-Meteo, anywhere on Earth. Your location is rounded to about 1&nbsp;km.</p></li>
+        <li><span class="n">2 · Science</span><h3>NWS heat index</h3><p>The US National Weather Service formula combines heat and humidity into a heat index and risk tier, hour by hour, including when risk will rise and peak.</p></li>
+        <li><span class="n">3 · Personal</span><h3>Your body, your threshold</h3><p>Older adults, pregnant people, young children and people with chronic conditions are warned one tier earlier than the general public.</p></li>
+        <li><span class="n">4 · Amazon Bedrock</span><h3>An action plan in your language</h3><p>An AI model writes three concrete steps and the warning signs to watch, grounded in CDC and NIOSH guidance, in any of 13 languages.</p></li>
+        <li><span class="n">5 · Early warning</span><h3>Alerts you don’t have to ask for</h3><p>Every hour, Amazon EventBridge Scheduler triggers a re-check and Amazon SNS emails anyone whose risk is rising.</p></li>
+      </ol>
+      <ul class="aws-list" aria-label="AWS services used">
+        <li>Amazon Bedrock</li><li>AWS Lambda</li><li>Amazon API Gateway</li><li>Amazon DynamoDB</li><li>Amazon EventBridge Scheduler</li><li>Amazon SNS</li><li>Amazon S3</li><li>Amazon CloudFront</li><li>AWS SAM</li><li>AWS X-Ray</li>
+      </ul>
+    </section>
+  </main>
+
+  <footer class="site-footer">
+    <div class="wrap">
+      <p><strong>HeatShield gives safety information, not medical care.</strong> If someone is confused, faints or has very hot skin, call your local emergency number.</p>
+      <p>Weather data by <a href="https://open-meteo.com/" rel="noopener">Open-Meteo.com</a> (CC BY 4.0). Heat index and tiers: <a href="https://www.wpc.ncep.noaa.gov/html/heatindex_equation.shtml" rel="noopener">US National Weather Service</a>. Safety guidance grounded in <a href="https://www.cdc.gov/niosh/heat-stress/" rel="noopener">CDC/NIOSH</a>. Mortality estimate: <a href="https://www.who.int/news-room/fact-sheets/detail/climate-change-heat-and-health" rel="noopener">WHO</a> (2000–2019 average).</p>
+      <p>Built for the AWS Student Builder Group “Zero to Shipped” hackathon · Social Good · Community.</p>
+      <p class="version" id="version"></p>
+    </div>
+  </footer>
+</body>
+</html>

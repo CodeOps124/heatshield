@@ -158,6 +158,40 @@ test('owner can view and delete their data; deletion unsubscribes and removes al
   assert.equal(notifier.subs.size, 0);
 });
 
+test('read-only (demo) groups refuse new members and removals but still show the dashboard', async () => {
+  const { api, db } = enrollment();
+  const g = parse(await api(apiEvent('POST /api/groups', { body: { name: 'Demo' } }))).body;
+  const m = parse(await api(apiEvent('POST /api/locations', { body: member({ groupId: g.groupId }) }))).body;
+  db.data.groups.get(g.groupId).readOnly = true;
+
+  const info = parse(await api(apiEvent('GET /api/groups/{groupId}', { pathParameters: { groupId: g.groupId } })));
+  assert.equal(info.body.readOnly, true);
+  const join = parse(await api(apiEvent('POST /api/locations', { body: member({ groupId: g.groupId, name: 'Vandal' }) })));
+  assert.equal(join.status, 403);
+  const remove = parse(await api(apiEvent('DELETE /api/groups/{groupId}/members/{locationId}', {
+    pathParameters: { groupId: g.groupId, locationId: m.locationId }, headers: { 'x-admin-key': g.adminKey },
+  })));
+  assert.equal(remove.status, 403);
+  const dash = parse(await api(apiEvent('GET /api/groups/{groupId}/dashboard', {
+    pathParameters: { groupId: g.groupId }, headers: { 'x-admin-key': g.adminKey },
+  })));
+  assert.equal(dash.status, 200);
+  assert.equal(dash.body.group.readOnly, true);
+  assert.equal(dash.body.members.length, 1);
+});
+
+test('personal page exposes a trimmed last-alert record', async () => {
+  const { api, db } = enrollment();
+  const reg = parse(await api(apiEvent('POST /api/locations', { body: member() }))).body;
+  db.data.alerts.set(`${reg.locationId}|2026-07-01`, {
+    locationId: reg.locationId, alertDate: '2026-07-01', tier: 'danger', status: 'sent', sentAt: 123, messageId: 'internal',
+  });
+  const me = parse(await api(apiEvent('GET /api/locations/{locationId}', {
+    pathParameters: { locationId: reg.locationId }, headers: { 'x-manage-token': reg.manageToken },
+  })));
+  assert.deepEqual(me.body.lastAlert, { date: '2026-07-01', tier: 'danger', status: 'sent', sentAt: 123 });
+});
+
 test('leader can remove only members of their own group', async () => {
   const { api, db } = enrollment();
   const g1 = parse(await api(apiEvent('POST /api/groups', { body: { name: 'A' } }))).body;

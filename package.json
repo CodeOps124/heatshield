@@ -10,6 +10,10 @@
   },
   "scripts": {
     "test": "node --test \"infra/tests/*.test.mjs\"",
+    "dev": "node scripts/dev-server.mjs",
+    "deploy": "node scripts/deploy.mjs",
+    "deploy:site": "node scripts/deploy.mjs --site-only",
+    "seed:demo": "node scripts/seed-demo.mjs",
     "validate": "sam validate --lint --template-file infra/template.yaml"
   }
 }
