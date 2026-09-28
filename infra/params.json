@@ -1,0 +1,7 @@
+{
+  "BedrockModelId": "us.anthropic.claude-haiku-4-5-20251001-v1:0",
+  "BedrockFoundationModelArnPattern": "anthropic.claude-haiku-4-5*",
+  "BedrockFallbackModelId": "us.amazon.nova-2-lite-v1:0",
+  "BedrockFallbackFoundationModelArnPattern": "amazon.nova-2-lite*",
+  "AlertScheduleState": "ENABLED"
+}

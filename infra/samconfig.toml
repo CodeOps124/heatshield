@@ -1,0 +1,21 @@
+# AWS SAM CLI config. Stack parameters live in params.json (scripts/deploy.mjs passes them).
+version = 0.1
+
+[default.global.parameters]
+stack_name = "heatshield"
+region = "us-east-1"
+profile = "heatshield"
+
+[default.build.parameters]
+cached = true
+parallel = true
+
+[default.validate.parameters]
+lint = true
+
+[default.deploy.parameters]
+capabilities = "CAPABILITY_IAM"
+confirm_changeset = false
+resolve_s3 = true
+s3_prefix = "heatshield"
+tags = "project=\"heatshield\" hackathon=\"aws-zero-to-shipped\""
