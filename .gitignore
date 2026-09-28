@@ -1,0 +1,26 @@
+# SAM build output and local artifacts
+.aws-sam/
+infra/.aws-sam/
+samconfig.local.toml
+
+# Node
+node_modules/
+npm-debug.log*
+
+# Secrets / local env — never commit credentials
+.env
+.env.*
+*.pem
+
+# Deploy-time outputs that contain per-account values
+.deploy-outputs.json
+frontend/version.json
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# Claude Code local settings (keep shared skills, drop personal settings)
+.claude/settings.local.json
