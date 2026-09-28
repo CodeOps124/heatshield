@@ -204,7 +204,7 @@ export function renderRiskSummary(container, { risk, placeName }) {
   const windowCallout = risk.riskWindow
     ? el('div', { class: 'callout alert' }, icon('clock'),
       el('p', {},
-        el('strong', {}, `Your risky hours: ${risk.riskWindow.startLabel}–${risk.riskWindow.endLabel}${risk.riskWindow.startsNow ? ' (already started)' : ''}`),
+        el('strong', {}, `Your risky hours: ${risk.riskWindow.label}`),
         `Your profile is warned from ${alertLabel} upward. Plan work, errands and exercise outside this window.`))
     : el('div', { class: 'callout info' }, icon('info'),
       el('p', {},

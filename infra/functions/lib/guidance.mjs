@@ -21,7 +21,7 @@ import { TIER_LABELS, maxTier } from './heat.mjs';
 import { LANGUAGES, matchesScript } from './languages.mjs';
 import { fallbackGuidance } from './fallback-guidance.mjs';
 
-export const PROMPT_VERSION = 'v1';
+export const PROMPT_VERSION = 'v2'; // v2: risky-hours window names its day ("now until 13:00 tomorrow")
 const CACHE_TTL_SECONDS = 6 * 60 * 60;
 const MODEL_TIMEOUT_MS = 9000;
 
@@ -64,9 +64,8 @@ export function buildGuidanceInput(risk, language) {
     peakHour: risk.peak24h.label,
     peakIsTomorrow: risk.peak24h.isTomorrow,
     alertTier: risk.profile.alertTier,
-    windowStart: risk.riskWindow?.startLabel ?? null,
-    windowEnd: risk.riskWindow?.endLabel ?? null,
-    windowStartsNow: risk.riskWindow?.startsNow ?? false,
+    // e.g. "now until 13:00 tomorrow" — derived only from clock hours and day offsets (bounded).
+    window: risk.riskWindow?.label ?? null,
     tropicalNight: risk.night.tropicalNight,
     tomorrowTier: tomorrow?.tier ?? null,
     dayAfterTier: dayAfter?.tier ?? null,
@@ -121,8 +120,8 @@ export function buildUserPrompt(input) {
       ? `Trend: rising to ${TIER_LABELS[input.risingTo]} within ${input.hoursUntilRise} hour(s).`
       : 'Trend: not rising in the next 6 hours.',
     `Hottest point in the next 24 hours: ${TIER_LABELS[input.peakTier]} around ${input.peakHour}${input.peakIsTomorrow ? ' tomorrow' : ' today'}.`,
-    input.windowStart
-      ? `Hours at or above their alert level: from ${input.windowStart} to ${input.windowEnd}${input.windowStartsNow ? ' (already started)' : ''}.`
+    input.window
+      ? `Hours at or above their alert level: ${input.window}.`
       : 'Hours at or above their alert level: none in the next 24 hours.',
     input.tropicalNight
       ? 'Tonight: stays warm (above 20 °C), so there is little relief overnight.'

@@ -14,21 +14,85 @@ output, not summaries.
 ```
 
 ## AWS ↔ Claude Code connection proof
-(Filled in during Phase 0 — see .claude/skills/aws-connect-proof/SKILL.md. Section below is
-updated with real output as soon as the connection is live.)
+Captured live on 2026-09-28 while following the official AWS Agent Toolkit setup
+(`aws/agent-toolkit-for-aws/setup-instructions/setup.md`). Account ID partially redacted
+(`6115****0540`); everything else is verbatim.
 
-- `aws sts get-caller-identity` output:
-  ```
-  <pending: captured right after `aws login` completes>
-  ```
-- MCP connection status (`/mcp` or equivalent):
-  ```
-  <pending>
-  ```
-- First real tool call + output:
-  ```
-  <pending>
-  ```
+**1. Sign-in (setup step 3) — browser-based `aws login`, no access keys anywhere on disk or in `.env`:**
+```
+$ aws configure set region us-east-1 --profile heatshield
+$ aws login --region us-east-1 --profile heatshield
+Attempting to open your default browser. If the browser does not open, open the following URL.
+...
+Updated profile heatshield to use arn:aws:iam::6115****0540:root credentials.
+EXIT_CODE=0
+```
+
+**2. Identity (setup step 4), 2026-09-28T18:11:02Z:**
+```
+$ aws sts get-caller-identity --profile heatshield
+{
+    "UserId": "6115****0540",
+    "Account": "6115****0540",
+    "Arn": "arn:aws:iam::6115****0540:root"
+}
+```
+> Honest note: this session is signed in as the account's **root** user, which AWS (and our own
+> PLAN.md) advise against for day-to-day work. See "What's left" for the planned switch to a
+> least-privilege IAM identity.
+
+**3. Agent Toolkit (setup step 5):** `aws configure agent-toolkit --yes --region us-east-1 --profile heatshield`
+installed 24 AWS skills (amazon-bedrock, aws-serverless, aws-cloudformation, aws-iam, …) into
+`~/.claude/skills` and wrote an `aws-mcp` server into Claude Code's config. It then crashed while
+configuring a *different* agent on Windows (`FileNotFoundError: [WinError 2]` in
+`agenttoolkit\agents.py::_configure_via_shell` — a `subprocess.run` of a CLI shim without a
+shell); the Claude Code entry had already been written. Per the guide, the profile was then added:
+```json
+"aws-mcp": {
+  "command": "uvx",
+  "args": ["mcp-proxy-for-aws@latest", "https://aws-mcp.us-east-1.api.aws/mcp", "--metadata", "INSTALL_SOURCE=aws-cli"],
+  "env": { "AWS_MCP_PROXY_PROFILES": "heatshield" }
+}
+```
+
+**4. MCP connection status:**
+```
+$ claude mcp list
+Checking MCP server health…
+...
+aws-mcp: uvx mcp-proxy-for-aws@latest https://aws-mcp.us-east-1.api.aws/mcp --metadata INSTALL_SOURCE=aws-cli - ✔ Connected
+```
+
+**5. Toolkit verification (setup step 6):**
+```
+$ aws agent-toolkit list-available-skills --region us-east-1 --profile heatshield
+{ "skills": [ { "name": "amazon-aurora-mysql", ..., "skillVersion": "v1", "categories": [] }, ... ] }
+```
+
+**6. First real tool call through the AWS MCP server** (JSON-RPC over stdio to the exact server
+entry above: `initialize` → `tools/list` → `tools/call`). This call is also where the Bedrock model
+IDs used in `infra/params.json` came from — nothing was guessed:
+```
+[2026-09-28T18:14:42.259Z] initialize -> server: {"name":"MCP Proxy for AWS","version":"1.7.0"} protocol 2025-06-18
+[2026-09-28T18:14:43.637Z] tools/list -> 8 tools: aws___get_presigned_url, aws___get_tasks, aws___run_script,
+    aws___get_regional_availability, aws___list_regions, aws___read_documentation, aws___retrieve_skill,
+    aws___search_documentation
+[2026-09-28T18:14:55.595Z] tools/call aws___run_script ->   (sts:GetCallerIdentity + bedrock:ListInferenceProfiles)
+{ "status": "success",
+  "return_value": {
+    "callerArn": "arn:aws:iam::6115****0540:root",
+    "inferenceProfiles": [
+      {"id": "us.amazon.nova-2-lite-v1:0", "status": "ACTIVE", "routesTo": ["us-east-1","us-east-2","us-west-2"]},
+      {"id": "us.anthropic.claude-haiku-4-5-20251001-v1:0", "status": "ACTIVE", "routesTo": ["us-east-1","us-east-2","us-west-2"]},
+      ... (nova-micro, nova-lite, nova-pro, nova-premier, global.* profiles)
+    ]},
+  "api_calls": [{"service": "sts", "operation": "GetCallerIdentity", "status": "success"},
+                {"service": "bedrock", "operation": "ListInferenceProfiles", "status": "success",
+                 "n_items": {"inferenceProfileSummaries": 88}}] }
+```
+
+**7. AWS rules added to `CLAUDE.md` (setup step 7)** between `<!-- BEGIN/END AWS Agent Toolkit rules -->`
+markers, appended below the project's own instructions (which take precedence).
 
 ---
 

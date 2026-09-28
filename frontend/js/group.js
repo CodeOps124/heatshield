@@ -47,7 +47,7 @@ function row(m, readOnly, reload) {
       : el('td', { colspan: 3 }, el('span', { class: 'member-sub' }, 'Forecast temporarily unavailable')),
     r
       ? el('td', {}, tierBadge(r.levelTier),
-        el('div', { class: 'member-sub' }, r.riskWindow ? `Risky ${r.riskWindow.startLabel}–${r.riskWindow.endLabel}` : 'Below their alert level'),
+        el('div', { class: 'member-sub' }, r.riskWindow ? `Risky ${r.riskWindow.label}` : 'Below their alert level in the next 24 h'),
         r.shouldAlert ? el('div', { class: 'member-sub' }, el('strong', {}, 'Needs attention')) : null)
       : null,
     r ? el('td', { class: 'num' }, fmtC(r.peak.heatIndexC), el('div', { class: 'member-sub' }, `${r.peak.label}${r.peak.isTomorrow ? ' tomorrow' : ''}`)) : null,

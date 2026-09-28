@@ -22,7 +22,7 @@ test('guidance input contains only bounded, enumerated values (no user text)', (
   const input = buildGuidanceInput(risk(), 'ar');
   for (const [k, v] of Object.entries(input)) {
     assert.ok(v === null || ['string', 'number', 'boolean'].includes(typeof v), `${k} has type ${typeof v}`);
-    if (typeof v === 'string') assert.ok(v.length <= 20, `${k} is suspiciously long: ${v}`);
+    if (typeof v === 'string') assert.ok(v.length <= 45, `${k} is suspiciously long: ${v}`);
   }
   const prompt = buildUserPrompt(input);
   assert.match(prompt, /Arabic/);

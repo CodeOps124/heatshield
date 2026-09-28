@@ -49,7 +49,7 @@ export function formatAlert({ location, risk, guidance, siteUrl, test = false })
     `${L.now}: ${TIER_LABELS[risk.current.tier]} · ${risk.current.heatIndexApplies ? `heat index ${fmtC(risk.current.heatIndexC)}` : `air ${fmtC(risk.current.tempC)}`}`,
     `${L.peak}: ${TIER_LABELS[risk.peak24h.tier]} around ${risk.peak24h.label}${risk.peak24h.isTomorrow ? ' (tomorrow)' : ''} · ${fmtC(risk.peak24h.heatIndexC)}`,
   ];
-  if (risk.riskWindow) lines.push(`${L.window}: ${risk.riskWindow.startLabel}–${risk.riskWindow.endLabel}`);
+  if (risk.riskWindow) lines.push(`${L.window}: ${risk.riskWindow.label}`);
   lines.push(
     `Profile: ${PROFILES[location.profile]?.label ?? location.profile} (alerts from ${TIER_LABELS[risk.profile.alertTier]})`,
     '',

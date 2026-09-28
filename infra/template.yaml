@@ -117,6 +117,16 @@ Resources:
       DefaultRouteSettings: # per-route throttle: caps abuse (and Bedrock spend) on a public endpoint
         ThrottlingBurstLimit: 20
         ThrottlingRateLimit: 10
+      RouteSettings:
+        # Registrations can trigger an AWS confirmation email to any address typed in, so these
+        # routes are throttled hard to stop HeatShield being used to spam inboxes.
+        # (Production: add an AWS WAF per-IP rate-based rule on CloudFront.)
+        POST /api/locations:
+          ThrottlingBurstLimit: 3
+          ThrottlingRateLimit: 1
+        POST /api/groups:
+          ThrottlingBurstLimit: 3
+          ThrottlingRateLimit: 1
       AccessLogSettings:
         DestinationArn: !GetAtt HttpApiAccessLogs.Arn
         Format: '{"requestId":"$context.requestId","routeKey":"$context.routeKey","status":"$context.status","latencyMs":"$context.responseLatency","integrationError":"$context.integrationErrorMessage"}'

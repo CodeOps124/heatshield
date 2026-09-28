@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  heatIndexF, heatIndexC, tierForHeatIndexF, assessRisk, cToF, fToC, PROFILES,
+  heatIndexF, heatIndexC, tierForHeatIndexF, assessRisk, cToF, fToC, PROFILES, windowLabel,
 } from '../functions/lib/heat.mjs';
 import { makeForecast, diurnal } from './helpers.mjs';
 
@@ -116,6 +116,29 @@ test('assessRisk: evening -> peak is tomorrow', () => {
   assert.equal(r.peak24h.isTomorrow, false);
   assert.equal(evening.peak24h.isTomorrow, true);
   assert.equal(evening.partOfDay, 'evening');
+});
+
+test('risk window labels always say which day (regression: "14:00–13:00" on the live dashboard)', () => {
+  const base = { startsNow: false, coversNext24h: false };
+  assert.equal(windowLabel({ ...base, coversNext24h: true, startsNow: true, startLabel: '14:00', endLabel: '14:00', startDay: 0, endDay: 1 }), 'all of the next 24 hours');
+  assert.equal(windowLabel({ ...base, startsNow: true, startLabel: '14:00', endLabel: '13:00', startDay: 0, endDay: 1 }), 'now until 13:00 tomorrow');
+  assert.equal(windowLabel({ ...base, startsNow: true, startLabel: '22:00', endLabel: '17:00', startDay: 0, endDay: 0 }), 'now until 17:00');
+  assert.equal(windowLabel({ ...base, startLabel: '10:00', endLabel: '18:00', startDay: 1, endDay: 1 }), '10:00 tomorrow to 18:00');
+  assert.equal(windowLabel({ ...base, startLabel: '14:00', endLabel: '00:00', startDay: 0, endDay: 0 }), '14:00 to midnight');
+  assert.equal(windowLabel({ ...base, startLabel: '21:00', endLabel: '04:00', startDay: 0, endDay: 1 }), '21:00 to 04:00 tomorrow');
+});
+
+test('assessRisk window: end is one hour after the last risky hour, with day offsets', () => {
+  // Hot at night, current hour 20:00: the risky window runs past midnight.
+  const r = assessRisk(makeForecast({ nowHour: 20, temp: diurnal(27, 38), rh: () => 55 }), 'outdoor_worker');
+  const w = r.riskWindow;
+  assert.ok(w);
+  const startIdx = r.hourly.findIndex((h) => h.time === w.start);
+  const lastRisky = r.hourly[startIdx + w.hours - 1];
+  assert.equal(Date.parse(`${w.end}:00Z`) - Date.parse(`${lastRisky.time}:00Z`), 3600_000, 'end = last risky hour + 1 h');
+  assert.equal(w.startDay, 0);
+  assert.equal(w.endDay, lastRisky.time.slice(0, 10) === r.localTime.slice(0, 10) ? 0 : 1);
+  assert.match(w.label, /(now until|to) /);
 });
 
 test('assessRisk rejects unknown profiles and empty forecasts', () => {

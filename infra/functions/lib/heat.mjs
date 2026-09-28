@@ -102,6 +102,31 @@ const hourOf = (localIso) => Number(localIso.slice(11, 13));
 const hhmm = (localIso) => localIso.slice(11, 16);
 const dateOf = (localIso) => localIso.slice(0, 10);
 
+/** Local ISO hour + 1 h (string arithmetic via UTC so no machine time zone leaks in). */
+function plusOneHour(localIso) {
+  const d = new Date(`${localIso.slice(0, 16)}:00Z`);
+  d.setUTCHours(d.getUTCHours() + 1);
+  return d.toISOString().slice(0, 16);
+}
+
+/** Whole days between the local date `today` and the date of `localIso` (0 = today, 1 = tomorrow). */
+const dayOffset = (today, localIso) => Math.round((Date.parse(`${dateOf(localIso)}T00:00:00Z`) - Date.parse(`${today}T00:00:00Z`)) / 86400000);
+
+const dayWord = (offset) => (offset === 0 ? '' : offset === 1 ? ' tomorrow' : ' the day after tomorrow');
+
+/**
+ * Plain-English window, unambiguous about the day:
+ *   "all of the next 24 hours" · "now until 13:00 tomorrow" · "10:00 tomorrow to 18:00" · "14:00 to midnight"
+ * `endDay` is the day of the LAST risky hour, so a window ending at 00:00 reads "midnight" on that day.
+ */
+export function windowLabel({ startsNow, coversNext24h, startLabel, endLabel, startDay, endDay }) {
+  if (coversNext24h) return 'all of the next 24 hours';
+  // Name the end's day only when it differs from the (explicitly named) start day.
+  const endWord = !startsNow && endDay === startDay ? '' : dayWord(endDay);
+  const end = endLabel === '00:00' ? `midnight${endWord}` : `${endLabel}${endWord}`;
+  return startsNow ? `now until ${end}` : `${startLabel}${dayWord(startDay)} to ${end}`;
+}
+
 function scoreHour(h) {
   const hiF = heatIndexF(cToF(h.tempC), h.rh);
   return {
@@ -151,19 +176,27 @@ export function assessRisk(forecast, profileId) {
 
   // First contiguous window in the next 24 h at/above this profile's alert tier.
   const threshold = tierRank(profile.alertTier);
+  const today = dateOf(current.time);
   let riskWindow = null;
   const start = next24.findIndex((h) => tierRank(h.tier) >= threshold);
   if (start !== -1) {
     let end = start;
     while (end + 1 < next24.length && tierRank(next24[end + 1].tier) >= threshold) end += 1;
-    const endHour = next24[end + 1]?.time ?? next24[end].time;
+    const endExclusive = plusOneHour(next24[end].time); // the window ends when the last risky hour ends
+    const startDay = dayOffset(today, next24[start].time);
+    const endDay = dayOffset(today, next24[end].time); // day of the last risky hour
+    const coversNext24h = start === 0 && end === next24.length - 1;
     riskWindow = {
       start: next24[start].time,
-      end: endHour,
+      end: endExclusive,
       startLabel: hhmm(next24[start].time),
-      endLabel: hhmm(endHour),
+      endLabel: hhmm(endExclusive),
+      startDay,
+      endDay,
       startsNow: start === 0,
+      coversNext24h,
       hours: end - start + 1,
+      label: windowLabel({ startsNow: start === 0, coversNext24h, startLabel: hhmm(next24[start].time), endLabel: hhmm(endExclusive), startDay, endDay }),
     };
   }
 
@@ -187,7 +220,6 @@ export function assessRisk(forecast, profileId) {
   const shouldAlert = tierRank(next12MaxTier) >= threshold;
 
   const localHour = hourOf(current.time);
-  const today = dateOf(current.time);
   const uvMaxToday = forecast.daily?.find((d) => d.date === today)?.uvMax ?? null;
 
   return {

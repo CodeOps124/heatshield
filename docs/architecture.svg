@@ -1,0 +1,122 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1220 640" width="1220" height="640" font-family="system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif" role="img" aria-labelledby="t d">
+  <title id="t">HeatShield architecture on AWS</title>
+  <desc id="d">Browsers reach CloudFront, which serves the static site from a private S3 bucket and forwards /api to an API Gateway HTTP API backed by two Lambda functions. The public Lambda reads Open-Meteo weather, computes the NWS heat index, and asks Amazon Bedrock (Claude Haiku 4.5, falling back to Amazon Nova 2 Lite) for localized guidance, cached in DynamoDB. The enrollment Lambda stores groups and locations in DynamoDB and subscribes emails to SNS. Every hour EventBridge Scheduler runs an alert-check Lambda that recomputes risk and publishes alerts through SNS to email.</desc>
+  <defs>
+    <marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#52514e"/></marker>
+    <style>
+      .box{fill:#ffffff;stroke:#c3c2b7;stroke-width:1.5}
+      .aws{fill:#fff7ef;stroke:#eb6834;stroke-width:1.5}
+      .ext{fill:#f0f6ff;stroke:#2a78d6;stroke-width:1.5;stroke-dasharray:0}
+      .h{font-size:15px;font-weight:700;fill:#0b0b0b}
+      .s{font-size:12px;fill:#52514e}
+      .e{stroke:#52514e;stroke-width:1.5;fill:none;marker-end:url(#a)}
+      .lbl{font-size:11px;fill:#52514e}
+      .zone{fill:none;stroke:#e1e0d9;stroke-width:1.5}
+      .zt{font-size:12px;font-weight:700;fill:#898781;letter-spacing:.06em}
+    </style>
+  </defs>
+  <rect width="1220" height="640" rx="18" fill="#fcfcfb"/>
+
+  <!-- legend -->
+  <rect class="aws" x="24" y="24" width="14" height="14" rx="3"/>
+  <text class="s" x="44" y="36">AWS service (us-east-1, all defined in one SAM template)</text>
+  <rect class="ext" x="24" y="48" width="14" height="14" rx="3"/>
+  <text class="s" x="44" y="60">external free API</text>
+
+  <!-- people -->
+  <rect class="box" x="24" y="110" width="180" height="70" rx="10"/>
+  <text class="h" x="40" y="138">People at risk</text>
+  <text class="s" x="40" y="158">workers, older adults,</text>
+  <text class="s" x="40" y="173">families · any browser</text>
+  <rect class="box" x="24" y="210" width="180" height="70" rx="10"/>
+  <text class="h" x="40" y="238">Community leader</text>
+  <text class="s" x="40" y="258">foreman, teacher, clinic</text>
+  <text class="s" x="40" y="273">worker · private dashboard</text>
+  <rect class="box" x="24" y="520" width="180" height="70" rx="10"/>
+  <text class="h" x="40" y="548">Email inbox</text>
+  <text class="s" x="40" y="568">alert in their language,</text>
+  <text class="s" x="40" y="583">double opt-in, unsubscribe</text>
+
+  <!-- edge -->
+  <rect class="aws" x="252" y="150" width="190" height="96" rx="10"/>
+  <text class="h" x="268" y="178">Amazon CloudFront</text>
+  <text class="s" x="268" y="198">one HTTPS URL, global edge</text>
+  <text class="s" x="268" y="214">CSP + HSTS headers</text>
+  <text class="s" x="268" y="230">/api/* → API, rest → S3</text>
+
+  <rect class="aws" x="482" y="60" width="200" height="72" rx="10"/>
+  <text class="h" x="498" y="88">Amazon S3</text>
+  <text class="s" x="498" y="108">private bucket, OAC only</text>
+  <text class="s" x="498" y="123">static HTML/CSS/JS</text>
+
+  <rect class="aws" x="482" y="222" width="200" height="72" rx="10"/>
+  <text class="h" x="498" y="250">API Gateway</text>
+  <text class="s" x="498" y="270">HTTP API · per-route</text>
+  <text class="s" x="498" y="285">throttling · access logs</text>
+
+  <!-- lambdas -->
+  <rect class="aws" x="722" y="130" width="250" height="84" rx="10"/>
+  <text class="h" x="738" y="158">Lambda · public API</text>
+  <text class="s" x="738" y="178">geocode · NWS heat index ·</text>
+  <text class="s" x="738" y="194">risk tiers · Bedrock guidance</text>
+
+  <rect class="aws" x="722" y="300" width="250" height="84" rx="10"/>
+  <text class="h" x="738" y="328">Lambda · enrollment API</text>
+  <text class="s" x="738" y="348">groups · registrations ·</text>
+  <text class="s" x="738" y="364">leader dashboard · delete</text>
+
+  <rect class="aws" x="482" y="470" width="200" height="72" rx="10"/>
+  <text class="h" x="498" y="498">EventBridge Scheduler</text>
+  <text class="s" x="498" y="518">cron(0 * * * ? *)</text>
+  <text class="s" x="498" y="533">every hour</text>
+
+  <rect class="aws" x="722" y="464" width="250" height="84" rx="10"/>
+  <text class="h" x="738" y="492">Lambda · alert check</text>
+  <text class="s" x="738" y="512">re-score everyone · quiet hours ·</text>
+  <text class="s" x="738" y="528">atomic per-day/per-tier dedupe</text>
+
+  <!-- services right -->
+  <rect class="ext" x="1022" y="40" width="176" height="70" rx="10"/>
+  <text class="h" x="1038" y="68">Open-Meteo</text>
+  <text class="s" x="1038" y="88">hourly forecast,</text>
+  <text class="s" x="1038" y="102">geocoding (no key)</text>
+
+  <rect class="aws" x="1022" y="130" width="176" height="96" rx="10"/>
+  <text class="h" x="1038" y="158">Amazon Bedrock</text>
+  <text class="s" x="1038" y="178">Converse API</text>
+  <text class="s" x="1038" y="194">Claude Haiku 4.5 →</text>
+  <text class="s" x="1038" y="210">Nova 2 Lite → static</text>
+
+  <rect class="aws" x="1022" y="246" width="176" height="110" rx="10"/>
+  <text class="h" x="1038" y="274">DynamoDB</text>
+  <text class="s" x="1038" y="294">Groups · Locations</text>
+  <text class="s" x="1038" y="310">(GSI byGroup) · Alerts</text>
+  <text class="s" x="1038" y="326">· GuidanceCache (TTL)</text>
+  <text class="s" x="1038" y="342">on-demand</text>
+
+  <rect class="aws" x="1022" y="400" width="176" height="84" rx="10"/>
+  <text class="h" x="1038" y="428">Amazon SNS</text>
+  <text class="s" x="1038" y="448">1 topic, per-person</text>
+  <text class="s" x="1038" y="464">filter policy</text>
+
+  <!-- edges -->
+  <path class="e" d="M204 145 H228 Q240 145 240 160 V175 H250"/>
+  <path class="e" d="M204 245 H228 Q240 245 240 230 V215 H250"/>
+  <path class="e" d="M442 175 H462 Q470 175 470 160 V110 H480"/>
+  <path class="e" d="M442 220 H462 Q470 220 470 240 V255 H480"/>
+  <path class="e" d="M682 245 H702 Q710 245 710 230 V185 H720"/>
+  <path class="e" d="M682 270 H702 Q710 270 710 290 V335 H720"/>
+  <path class="e" d="M972 150 H995 Q1005 150 1005 130 V85 H1020"/>
+  <path class="e" d="M972 172 H1020"/>
+  <path class="e" d="M972 196 H995 Q1005 196 1005 215 V270 H1020"/>
+  <path class="e" d="M972 330 H1020"/>
+  <path class="e" d="M972 360 H995 Q1005 360 1005 380 V420 H1020"/>
+  <path class="e" d="M682 506 H720"/>
+  <path class="e" d="M972 490 H990 Q1000 490 1000 470 V455 H1020"/>
+  <path class="e" d="M972 520 H1010 Q1012 520 1012 300 V300 H1020"/>
+  <path class="e" d="M1198 470 H1208 Q1212 470 1212 480 V600 Q1212 610 1200 610 H120 Q114 610 114 600 V592"/>
+
+  <text class="lbl" x="206" y="136">HTTPS</text>
+  <text class="lbl" x="1030" y="600">SNS email</text>
+  <text class="lbl" x="686" y="498">invoke</text>
+</svg>
