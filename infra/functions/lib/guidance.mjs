@@ -24,6 +24,7 @@ import { LANGUAGES, matchesScript } from './languages.mjs';
 import { fallbackGuidance } from './fallback-guidance.mjs';
 import { createBm25Index } from './algorithms/bm25.mjs';
 import { FACTS } from './agents/facts.mjs';
+import { parseJsonLoose } from './util.mjs';
 
 export const PROMPT_VERSION = 'v4'; // v4: calibrated reviewers (blocking vs minor), emergency line required
 const CACHE_TTL_SECONDS = 6 * 60 * 60;
@@ -178,7 +179,7 @@ export function parseGuidance(text, language) {
   const start = text.indexOf('{');
   const end = text.lastIndexOf('}');
   if (start === -1 || end <= start) throw new Error('Model output contained no JSON object');
-  const raw = JSON.parse(text.slice(start, end + 1));
+  const raw = parseJsonLoose(text.slice(start, end + 1));
 
   const headline = clean(raw.headline);
   const seekHelp = clean(raw.seekHelp);
@@ -344,7 +345,10 @@ export function createGuidanceService({
       language,
       deadline,
       factsSummary: situationLines(input),
-      factsList: factsAsList(facts),
+      // The judge sees the whole vetted library, not only what was retrieved for the writer: with the
+      // subset, Vera judged advice from outside it on the model's own beliefs ("a cup every 15 minutes
+      // is overhydration") and contradicted the library.
+      factsList: factsAsList(FACTS),
       situation: situationLines(input),
     };
     const fallback = (why, reviewResult = null) => {

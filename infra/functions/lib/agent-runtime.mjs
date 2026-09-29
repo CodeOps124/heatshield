@@ -10,6 +10,7 @@
  * Every run is recorded (agent, trigger, model, turns, tool calls, tokens, outcome) so the public
  * Agent Console can show that the agents really are working, and what they decided.
  */
+import { parseJsonLoose } from './util.mjs';
 
 const MAX_TOOL_RESULT_CHARS = 12_000;
 
@@ -40,7 +41,7 @@ export function extractJson(text) {
   const end = text.lastIndexOf('}');
   if (start === -1 || end <= start) throw new AgentError('Model output contained no JSON object', { code: 'no_json' });
   try {
-    return JSON.parse(text.slice(start, end + 1));
+    return parseJsonLoose(text.slice(start, end + 1));
   } catch (err) {
     throw new AgentError(`Model output was not valid JSON: ${err.message}`, { code: 'bad_json' });
   }

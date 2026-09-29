@@ -133,7 +133,8 @@ export const tables = {
   agentLog: process.env.AGENT_LOG_TABLE,
 };
 
-export const models = [process.env.BEDROCK_MODEL_ID, process.env.BEDROCK_FALLBACK_MODEL_ID].filter(Boolean);
+// The reviewer model writes only as a last resort (the writer failed twice), e.g. a runaway reply.
+export const models = [...new Set([process.env.BEDROCK_MODEL_ID, process.env.BEDROCK_FALLBACK_MODEL_ID, process.env.REVIEWER_MODEL_ID].filter(Boolean))];
 /** Tool-using agents (Sol, Kai, Otto) and the reviewers (Lexi, Vera; a different model family from the writer). */
 export const agentModels = [process.env.AGENT_MODEL_ID, process.env.BEDROCK_FALLBACK_MODEL_ID].filter(Boolean);
 export const reviewerModels = [process.env.REVIEWER_MODEL_ID, process.env.AGENT_MODEL_ID].filter(Boolean);

@@ -96,3 +96,38 @@ export const toAscii = (s) =>
     .replace(/[^\x20-\x7E]/g, '')
     .replace(/\s+/g, ' ')
     .trim();
+
+/**
+ * JSON.parse that also accepts the two slips models make most often (seen live in Chinese):
+ * raw control characters such as line breaks inside strings, and trailing commas.
+ */
+export function parseJsonLoose(text) {
+  try {
+    return JSON.parse(text);
+  } catch (err) {
+    let out = '';
+    let inString = false;
+    let escaped = false;
+    for (let i = 0; i < text.length; i += 1) {
+      const c = text[i];
+      if (inString) {
+        if (escaped) escaped = false;
+        else if (c === '\\') escaped = true;
+        else if (c === '"') inString = false;
+        else if (c < ' ') { out += `\\u${c.charCodeAt(0).toString(16).padStart(4, '0')}`; continue; }
+      } else if (c === '"') {
+        inString = true;
+      } else if (c === ',') {
+        let j = i + 1;
+        while (j < text.length && /\s/.test(text[j])) j += 1;
+        if (text[j] === '}' || text[j] === ']') continue; // trailing comma
+      }
+      out += c;
+    }
+    try {
+      return JSON.parse(out);
+    } catch {
+      throw err; // report the original problem
+    }
+  }
+}

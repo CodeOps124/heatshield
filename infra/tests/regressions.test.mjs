@@ -18,6 +18,7 @@ import { createStore } from '../functions/lib/store.mjs';
 import { assessRisk } from '../functions/lib/heat.mjs';
 import { createWeatherClient, UpstreamError } from '../functions/lib/weather.mjs';
 import { createFakeDb, makeForecast, diurnal, silentLog, apiEvent, parse } from './helpers.mjs';
+import { parseJsonLoose } from '../functions/lib/util.mjs';
 
 const text = (t) => ({ stopReason: 'end_turn', output: { message: { role: 'assistant', content: [{ text: t }] } }, usage: { inputTokens: 10, outputTokens: 5 } });
 const hot = () => makeForecast({ nowHour: 9, temp: diurnal(27, 38), rh: () => 55 });
@@ -346,6 +347,27 @@ test('Mira 11:55 UTC: a runaway Swahili reply hit the token limit; the writer no
   });
   assert.equal((await svc2.getGuidance(assessRisk(hot(), 'general'), 'en')).source, 'bedrock');
   assert.deepEqual(seen, ['claude', 'nova']);
+});
+
+test('Mira 11:58 UTC: Chinese replies with a raw line break in a string or a trailing comma still parse', () => {
+  const raw = '{"headline":"今天很热。","actions":["早上工作。\n中午休息。","多喝水。","待在阴凉处。",],"seekHelp":"如果头晕，请拨打当地急救电话。"}';
+  const g = parseJsonLoose(raw);
+  assert.equal(g.actions.length, 3);
+  assert.equal(g.actions[0], '早上工作。\n中午休息。');
+  assert.throws(() => parseJsonLoose('{"headline": }'), SyntaxError);
+  assert.deepEqual(extractJson('Sure! {"ok": [1, 2,],}'), { ok: [1, 2] });
+});
+
+test('Vera 11:58 UTC: the judge sees the whole vetted library, not only the facts retrieved for the writer', async () => {
+  let seen = '';
+  const reviewers = {
+    language: { review: async () => ({ verdict: 'approve', issues: [] }) },
+    safety: { review: async (_g, ctx) => { seen = ctx.factsList; return { verdict: 'approve', issues: [] }; } },
+  };
+  const svc = createGuidanceService({ converse: async () => text(JSON.stringify(GOOD)), cache: memCache(), models: ['w'], log: silentLog, reviewers });
+  await svc.getGuidance(assessRisk(hot(), 'general'), 'en');
+  assert.match(seen, /one cup \(240 ml\) of water every 15 to 20 minutes/);
+  assert.match(seen, /Cool showers or baths help lower body temperature/);
 });
 
 test('Kai: empty groups (left by end-to-end tests) are skipped, not counted as planned', async () => {
