@@ -426,4 +426,12 @@ details.table-view summary { cursor: pointer; color: var(--link); font-size: 0.9
 .level { display: inline-block; font-size: 0.75rem; font-weight: 750; text-transform: uppercase; letter-spacing: 0.03em; padding: 1px 6px; border-radius: 4px; color: #0b0b0b; }
 .level.watch { background: #fde68a; } .level.warning { background: #fdba74; } .level.emergency { background: #fca5a5; }
 .task-plan { margin-top: 10px; }
+.checkins { list-style: none; margin: 12px 0 0; padding: 0; counter-reset: checkin; }
+.checkins li { position: relative; padding: 12px 0 12px 38px; border-top: 1px solid var(--border); }
+.checkins li::before {
+  counter-increment: checkin; content: counter(checkin); position: absolute; left: 0; top: 12px;
+  width: 26px; height: 26px; border-radius: 50%; display: grid; place-items: center;
+  background: #2b7a47; color: #fff; font-weight: 750; font-size: 0.85rem;
+}
+.checkin-action { margin: 6px 0 2px; }
 .teaser-cta { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; justify-content: space-between; margin-top: 12px; }

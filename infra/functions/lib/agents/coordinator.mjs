@@ -66,14 +66,15 @@ export function buildCheckInSchedule(members, risks, nowMs) {
       next12Tier: r.alert.levelTier,
       alertTier: r.profile.alertTier,
       riskyHours: r.riskWindow?.label ?? null,
-      urgency: Math.round(urgencyScore(f) * 100) / 100,
+      score: urgencyScore(f),
       deadline,
       checkInBy: deadline - nowMs <= 5 * 60_000 ? 'now' : `${localClock(deadline, offset)} their time`,
       hasEmail: !f.noEmail,
     });
   });
-  rows.sort((a, b) => a.deadline - b.deadline || b.urgency - a.urgency);
-  return rows.map((row, i) => ({ ...row, order: i + 1, ref: `M${i + 1}` }));
+  // Sort on the exact score: sorting on the rounded one tied everyone at 0.98 and fell back to input order.
+  rows.sort((a, b) => a.deadline - b.deadline || b.score - a.score);
+  return rows.map(({ score, ...row }, i) => ({ ...row, urgency: Math.round(score * 100) / 100, order: i + 1, ref: `M${i + 1}` }));
 }
 
 const templateAction = (row) => `Contact them ${row.checkInBy === 'now' ? 'now' : `before ${row.checkInBy}`}: ask how they feel, and go through their plan for ${row.riskyHours ?? 'the hot hours'}.`;
