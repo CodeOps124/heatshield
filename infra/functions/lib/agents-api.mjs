@@ -6,6 +6,7 @@ import { ROSTER, WORKERS, nextRunAt } from './agents/roster.mjs';
 
 const WORKING_WINDOW_MS = 90_000;
 const CACHE_MS = 10_000;
+const round1 = (x) => (Number.isFinite(x) ? Math.round(x * 10) / 10 : null);
 
 const runView = ({ at, trigger, outcome, durationMs, model, summary, inputTokens, outputTokens, toolCalls }) => ({
   at, trigger, outcome, durationMs, model, summary,
@@ -57,13 +58,14 @@ export function createAgentsApi({ agentLog, nowMs = () => Date.now() }) {
       generatedAt: new Date(now).toISOString(),
       agents: ROSTER.map(summarize),
       workers: WORKERS.map(summarize),
+      // City-level only: no head counts, coordinates rounded to ~11 km.
       sentinel: sentinel
         ? {
             generatedAt: sentinel.updatedAt,
             briefing: sentinel.briefing,
             areasScanned: sentinel.areasScanned,
-            events: (sentinel.events ?? []).map(({ place, level, trend, headline, reason, people, ehfWorst }) => ({ place, level, trend, headline, reason, people, ehfWorst })),
-            areas: (sentinel.areas ?? []).map(({ place, ceiling, ehfWorst, worstTier }) => ({ place, ceiling, ehfWorst, worstTier })),
+            events: (sentinel.events ?? []).map(({ place, level, trend, headline, reason, ehfWorst, lat, lon }) => ({ place, level, trend, headline, reason, ehfWorst, lat: round1(lat), lon: round1(lon) })),
+            areas: (sentinel.areas ?? []).map(({ place, ceiling, ehfWorst, worstTier, lat, lon, climatePending }) => ({ place, ceiling, ehfWorst, worstTier, lat: round1(lat), lon: round1(lon), climatePending: Boolean(climatePending) })),
           }
         : null,
       watchdog: watchdog

@@ -8,7 +8,7 @@
 import { assessRisk, PROFILES } from './heat.mjs';
 import { isLanguage } from './languages.mjs';
 import { roundCoord } from './weather.mjs';
-import { json, router } from './http.mjs';
+import { HttpError, json, router } from './http.mjs';
 import { ValidationError, cleanText, parseCoord } from './util.mjs';
 
 export function parseRiskQuery(q = {}) {
@@ -25,11 +25,32 @@ export function parseLanguage(value) {
   return lang;
 }
 
-export function createPublicApi({ weather, guidance, version, region, agentsApi = null }) {
+// Visitors may ask Sol or Otto to run now. A GLOBAL cooldown per agent (not per visitor) caps cost
+// no matter how many people click: at most 144 Sol runs and 720 Otto runs a day.
+export const ON_DEMAND_COOLDOWN_MS = { sol: 10 * 60_000, otto: 2 * 60_000 };
+
+export function createPublicApi({ weather, guidance, version, region, agentsApi = null, agentLog = null, runAgentNow = null, now = () => Date.now() }) {
   return router({
     'GET /api/agents': async () => {
       if (!agentsApi) return json(404, { error: { code: 'not_found', message: 'No such route' } });
       return json(200, await agentsApi.get());
+    },
+
+    'POST /api/agents/{agentId}/run': async (event) => {
+      const agentId = event.pathParameters?.agentId;
+      if (!Object.hasOwn(ON_DEMAND_COOLDOWN_MS, agentId)) {
+        throw new HttpError(404, 'not_found', 'Only Sol and Otto can be run on demand.');
+      }
+      if (!agentLog || !runAgentNow) throw new HttpError(503, 'unavailable', 'On-demand runs are not available.');
+      const last = await agentLog.getState('ondemand', agentId).catch(() => null);
+      const since = last?.requestedAt ? now() - Date.parse(last.requestedAt) : Infinity;
+      if (since < ON_DEMAND_COOLDOWN_MS[agentId]) {
+        const retryAfterSec = Math.ceil((ON_DEMAND_COOLDOWN_MS[agentId] - since) / 1000);
+        return json(429, { error: { code: 'cooldown', message: `Someone asked ${agentId === 'sol' ? 'Sol' : 'Otto'} ${Math.floor(since / 1000)} s ago. Try again in ${retryAfterSec} s.` }, retryAfterSec });
+      }
+      await agentLog.putState('ondemand', agentId, { requestedAt: new Date(now()).toISOString() });
+      const result = await runAgentNow(agentId);
+      return json(200, { agent: agentId, result });
     },
 
     'GET /api/health': async () =>
@@ -55,8 +76,9 @@ export function createPublicApi({ weather, guidance, version, region, agentsApi 
       // (or tamper with) the values that go into the prompt.
       const forecast = await weather.getForecast(lat, lon);
       const risk = assessRisk(forecast, profile);
+      const started = now();
       const result = await guidance.getGuidance(risk, lang);
-      return json(200, { lat, lon, risk, guidance: result });
+      return json(200, { lat, lon, risk, guidance: { ...result, durationMs: now() - started } });
     },
   });
 }

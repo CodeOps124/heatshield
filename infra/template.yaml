@@ -193,6 +193,9 @@ Resources:
         POST /api/groups/{groupId}/plan: # runs Kai (Bedrock); also a per-group 10-minute cooldown in code
           ThrottlingBurstLimit: 2
           ThrottlingRateLimit: 1
+        POST /api/agents/{agentId}/run: # runs Sol or Otto; also a global per-agent cooldown in code
+          ThrottlingBurstLimit: 2
+          ThrottlingRateLimit: 1
       AccessLogSettings:
         DestinationArn: !GetAtt HttpApiAccessLogs.Arn
         Format: '{"requestId":"$context.requestId","routeKey":"$context.routeKey","status":"$context.status","latencyMs":"$context.responseLatency","integrationError":"$context.integrationErrorMessage"}'
@@ -203,12 +206,19 @@ Resources:
       Description: Public API - health, geocoding, heat risk, guidance (Mira writes, Lexi and Vera review), agents feed
       Handler: handlers/public-api.handler
       Timeout: 28
+      Environment:
+        Variables:
+          SENTINEL_FUNCTION: !Ref SentinelFunction
+          WATCHDOG_FUNCTION: !Ref WatchdogFunction
       Policies:
         - DynamoDBCrudPolicy: { TableName: !Ref GuidanceCacheTable }
         - DynamoDBCrudPolicy: { TableName: !Ref AgentLogTable }
         - !Ref BedrockInvokePolicy
+        - LambdaInvokePolicy: { FunctionName: !Ref SentinelFunction } # visitor "ask Sol to rescan"
+        - LambdaInvokePolicy: { FunctionName: !Ref WatchdogFunction } # visitor "ask Otto to check"
       Events:
         Agents: { Type: HttpApi, Properties: { ApiId: !Ref HttpApi, Method: GET, Path: /api/agents } }
+        RunAgent: { Type: HttpApi, Properties: { ApiId: !Ref HttpApi, Method: POST, Path: '/api/agents/{agentId}/run' } }
         Health: { Type: HttpApi, Properties: { ApiId: !Ref HttpApi, Method: GET, Path: /api/health } }
         Geocode: { Type: HttpApi, Properties: { ApiId: !Ref HttpApi, Method: GET, Path: /api/geocode } }
         Risk: { Type: HttpApi, Properties: { ApiId: !Ref HttpApi, Method: GET, Path: /api/risk } }
@@ -337,25 +347,26 @@ Resources:
       Description: Otto - Ops Watchdog agent. Probes the public URL, EWMA latency control charts, heartbeats, incidents
       Handler: handlers/agents.watchdog
       Timeout: 90
+      # No references to the functions Otto watches (or to the distribution): the public API can
+      # invoke Otto on demand, so a reference back would be a CloudFormation dependency cycle.
+      # Log groups are discovered by the stack-name prefix; the site URL arrives in the schedule input.
       Environment:
         Variables:
-          SITE_URL: !Sub https://${Distribution.DomainName}
           OPS_TOPIC_ARN: !Ref OpsTopic
-          PUBLIC_API_FUNCTION: !Ref PublicApiFunction
-          ENROLLMENT_API_FUNCTION: !Ref EnrollmentApiFunction
-          ALERT_CHECK_FUNCTION: !Ref AlertCheckFunction
+          STACK_NAME: !Ref AWS::StackName
       Policies:
         - DynamoDBCrudPolicy: { TableName: !Ref AgentLogTable }
         - SNSPublishMessagePolicy: { TopicName: !GetAtt OpsTopic.TopicName }
         - !Ref BedrockInvokePolicy
         - Statement:
-            - Sid: ReadOwnFunctionLogs
+            - Sid: FindStackLogGroups
+              Effect: Allow
+              Action: logs:DescribeLogGroups
+              Resource: !Sub arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:*
+            - Sid: ReadStackFunctionLogs
               Effect: Allow
               Action: logs:FilterLogEvents
-              Resource:
-                - !Sub arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/${PublicApiFunction}:*
-                - !Sub arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/${EnrollmentApiFunction}:*
-                - !Sub arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/${AlertCheckFunction}:*
+              Resource: !Sub arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/${AWS::StackName}-*:*
       Events:
         Every15Minutes:
           Type: ScheduleV2
@@ -363,6 +374,7 @@ Resources:
             ScheduleExpression: cron(0/15 * * * ? *)
             State: !Ref AlertScheduleState
             RetryPolicy: { MaximumRetryAttempts: 0 }
+            Input: !Sub '{"siteUrl":"https://${Distribution.DomainName}"}'
 
   SentinelLogs:
     Type: AWS::Logs::LogGroup

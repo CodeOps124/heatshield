@@ -348,7 +348,19 @@ export function createGuidanceService({
       return fallback('writer_unavailable');
     }
 
+    // Every review round is kept, so Agent HQ can show what the reviewers actually objected to.
+    const rounds = [];
+    const noteRound = (v) => {
+      if (v.skipped) return;
+      const blocking = [...(v.language?.issues ?? []), ...(v.safety?.issues ?? [])].filter((i) => i.severity !== 'minor');
+      rounds.push({
+        language: v.language?.verdict ?? null,
+        safety: v.safety?.verdict ?? null,
+        blocking: blocking.slice(0, 3).map((i) => clean(i.problem).slice(0, 200)),
+      });
+    };
     let verdict = await review(draft.guidance, ctx);
+    noteRound(verdict);
     let revisions = 0;
 
     // Up to two revision rounds, each only if there is time for a full write + review.
@@ -358,6 +370,7 @@ export function createGuidanceService({
         draft = await write(input, facts, deadline, { draft: draft.guidance, issues });
         revisions += 1;
         verdict = await review(draft.guidance, ctx);
+        noteRound(verdict);
       } catch {
         return fallback('revision_failed', { status: 'rejected', revisions, language: summarizeReview(verdict.language), safety: summarizeReview(verdict.safety) });
       }
@@ -367,6 +380,7 @@ export function createGuidanceService({
       status: verdict.skipped ? 'skipped' : verdict.approved ? 'approved' : verdict.rejected ? 'rejected' : 'unreviewed',
       revised: revisions > 0,
       revisions,
+      rounds,
       language: summarizeReview(verdict.language),
       safety: summarizeReview(verdict.safety),
     };

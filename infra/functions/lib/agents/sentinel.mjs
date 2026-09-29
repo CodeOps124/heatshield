@@ -162,6 +162,7 @@ export async function runSentinel({ store, weather, climate, agentLog, converse,
   const candidates = assessed.filter((a) => a.ceiling);
   const areaSummary = assessed.map((a) => ({
     areaId: a.areaId, place: a.place, people: a.people, ceiling: a.ceiling, climatePending: Boolean(a.ehf.climatePending),
+    lat: Math.round(a.lat * 10) / 10, lon: Math.round(a.lon * 10) / 10, // city-level, for the situation board
     ehfWorst: a.ehf.worst ? { date: a.ehf.worst.date, ehf: a.ehf.worst.ehf, severity: a.ehf.worst.severity } : null,
     worstTier: a.hiDays.reduce((w, d) => (tierRank(d.tier) > tierRank(w) ? d.tier : w), 'lower'),
   }));

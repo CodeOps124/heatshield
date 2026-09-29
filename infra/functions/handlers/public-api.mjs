@@ -8,7 +8,7 @@ import { createAgentLog } from '../lib/agent-log.mjs';
 import { createAgentsApi } from '../lib/agents-api.mjs';
 import { createLanguageReviewer } from '../lib/agents/language-reviewer.mjs';
 import { createSafetyReviewer } from '../lib/agents/safety-reviewer.mjs';
-import { dynamo, converse, tables, models, reviewerModels } from '../lib/aws.mjs';
+import { dynamo, converse, tables, models, reviewerModels, invokeAgent } from '../lib/aws.mjs';
 import { log } from '../lib/util.mjs';
 
 const store = createStore({ db: dynamo, tables });
@@ -28,6 +28,8 @@ export const handler = createPublicApi({
     },
   }),
   agentsApi: createAgentsApi({ agentLog }),
+  agentLog,
+  runAgentNow: invokeAgent,
   version: process.env.APP_VERSION ?? 'dev',
   region: process.env.AWS_REGION,
 });

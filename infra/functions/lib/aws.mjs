@@ -11,7 +11,7 @@ import { BedrockRuntimeClient, ConverseCommand } from '@aws-sdk/client-bedrock-r
 import {
   SNSClient, SubscribeCommand, UnsubscribeCommand, PublishCommand, GetSubscriptionAttributesCommand,
 } from '@aws-sdk/client-sns';
-import { CloudWatchLogsClient, FilterLogEventsCommand } from '@aws-sdk/client-cloudwatch-logs';
+import { CloudWatchLogsClient, FilterLogEventsCommand, DescribeLogGroupsCommand } from '@aws-sdk/client-cloudwatch-logs';
 import { LambdaClient, InvokeCommand } from '@aws-sdk/client-lambda';
 
 const doc = DynamoDBDocumentClient.from(new DynamoDBClient({}), {
@@ -155,6 +155,17 @@ function sanitizeLogLine(message) {
 }
 
 export const logs = {
+  /** Names of log groups starting with `prefix`. */
+  async listGroups(prefix) {
+    const names = [];
+    let nextToken;
+    do {
+      const res = await cwl.send(new DescribeLogGroupsCommand({ logGroupNamePrefix: prefix, nextToken }));
+      names.push(...(res.logGroups ?? []).map((g) => g.logGroupName));
+      nextToken = res.nextToken;
+    } while (nextToken);
+    return names;
+  },
   /** Count matching log events since `startMs` (capped at 5 pages). */
   async count(logGroupName, filterPattern, startMs) {
     let total = 0;
@@ -181,13 +192,23 @@ export const opsPublish = async (subject, message) => {
 
 // ---------------------------------------------------------------- Lambda invoke (on-demand coordinator)
 const lambda = new LambdaClient({});
-export async function invokeCoordinator(groupId) {
+async function invokeSync(functionName, payload) {
   const res = await lambda.send(new InvokeCommand({
-    FunctionName: process.env.COORDINATOR_FUNCTION,
+    FunctionName: functionName,
     InvocationType: 'RequestResponse',
-    Payload: Buffer.from(JSON.stringify({ groupId, trigger: 'leader-request' })),
+    Payload: Buffer.from(JSON.stringify(payload)),
   }));
   const body = res.Payload ? JSON.parse(Buffer.from(res.Payload).toString('utf8') || 'null') : null;
-  if (res.FunctionError) throw new Error(body?.errorMessage ?? 'Coordinator failed');
+  if (res.FunctionError) throw new Error(body?.errorMessage ?? `${functionName} failed`);
   return body;
+}
+
+export const invokeCoordinator = (groupId) => invokeSync(process.env.COORDINATOR_FUNCTION, { groupId, trigger: 'leader-request' });
+
+/** Visitor-triggered runs of Sol / Otto from Agent HQ (budget keeps them inside the web request). */
+const ON_DEMAND = { sol: 'SENTINEL_FUNCTION', otto: 'WATCHDOG_FUNCTION' };
+export async function invokeAgent(agentId) {
+  const fn = process.env[ON_DEMAND[agentId]];
+  if (!fn) throw new Error(`Agent ${agentId} cannot be run on demand`);
+  return invokeSync(fn, { trigger: 'visitor', budgetMs: 20_000 });
 }

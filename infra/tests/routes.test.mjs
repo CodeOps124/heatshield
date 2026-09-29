@@ -203,3 +203,28 @@ test('leader can remove only members of their own group', async () => {
   assert.equal(attempt.status, 404);
   assert.equal(db.data.locations.size, 1);
 });
+
+test('visitors can run Sol or Otto on demand, behind a global per-agent cooldown', async () => {
+  const { db, tables } = createFakeDb();
+  const { createAgentLog } = await import('../functions/lib/agent-log.mjs');
+  let now = Date.parse('2026-09-29T12:00:00Z');
+  const agentLog = createAgentLog({ db, table: tables.agentLog, nowMs: () => now });
+  const ran = [];
+  const api = createPublicApi({
+    weather, guidance, version: 't', agentLog, now: () => now,
+    runAgentNow: async (id) => { ran.push(id); return { outcome: 'healthy', summary: 'All probes healthy' }; },
+  });
+  const run = async (agentId) => parse(await api(apiEvent('POST /api/agents/{agentId}/run', { pathParameters: { agentId } })));
+
+  const first = await run('otto');
+  assert.equal(first.status, 200);
+  assert.equal(first.body.result.outcome, 'healthy');
+  const tooSoon = await run('otto');
+  assert.equal(tooSoon.status, 429);
+  assert.ok(tooSoon.body.retryAfterSec > 0 && tooSoon.body.retryAfterSec <= 120);
+  assert.equal((await run('sol')).status, 200, 'cooldowns are per agent');
+  now += 2 * 60_000 + 1000;
+  assert.equal((await run('otto')).status, 200);
+  assert.deepEqual(ran, ['otto', 'sol', 'otto']);
+  assert.equal((await run('mira')).status, 404, 'only Sol and Otto can be run on demand');
+});
