@@ -60,6 +60,27 @@ export function parseSafetyReview(text) {
   return { verdict: issues.some((i) => i.severity === 'blocking') ? 'revise' : 'approve', issues };
 }
 
+// Chain-of-verification for harm objections (rules b and c). Seen live on an Arabic plan: Vera blocked
+// "cold water as the main cooling" and "a fan as the main cooling" while quoting a sentence about
+// light clothing that mentions neither. A blocking harm objection now has to survive a second reading
+// that copies the exact words giving the harmful advice, and code checks those words are really there.
+// Compared without punctuation or diacritics, so evidence that drops an Arabic kasra still matches.
+const norm = (s) => String(s ?? '').normalize('NFD').replace(/\p{M}+/gu, '').toLowerCase().replace(/[\s\p{P}]+/gu, ' ').trim();
+
+export function evidenceInMessage(evidence, guidance) {
+  const e = norm(evidence);
+  return e.length >= 4 && norm([guidance.headline, ...guidance.actions, guidance.seekHelp].join(' ')).includes(e);
+}
+
+export function parseVerification(text, count) {
+  const raw = extractJson(text);
+  if (!Array.isArray(raw?.verdicts)) throw new Error('Verification needs a verdicts array');
+  return Array.from({ length: count }, (_, i) => {
+    const v = raw.verdicts.find((x) => Number(x?.id) === i + 1);
+    return { confirmed: v?.confirmed === true, evidence: clean(v?.evidence, 300) };
+  });
+}
+
 export function createSafetyReviewer({ converse, models }) {
   return {
     name: 'vera',
@@ -82,7 +103,38 @@ export function createSafetyReviewer({ converse, models }) {
         deadline,
         validate: parseSafetyReview,
       });
-      return { ...res.value, method: 'rules+llm', usage: res.usage, model: res.model };
+      const out = { ...res.value, method: 'rules+llm', usage: { ...res.usage }, model: res.model };
+      const harm = out.issues.filter((i) => i.severity === 'blocking' && (i.rule === 'b' || i.rule === 'c'));
+      if (harm.length && deadline - Date.now() > 4000) {
+        try {
+          const check = await runAgent({
+            agent: {
+              name: 'vera',
+              models,
+              maxTurns: 1,
+              maxTokens: 600,
+              system: 'You double-check objections to a heat-safety message. For each objection, decide whether the message really gives the harmful advice or breaks the limit described. Advice to reduce, limit or avoid something is not advice to do it. If it does, copy the exact words from the message that give that advice, in the message\'s own language. If no words in the message give it, the objection is not confirmed.',
+              tools: [],
+            },
+            input: `Message:\n${JSON.stringify({ headline: guidance.headline, actions: guidance.actions, seekHelp: guidance.seekHelp })}\n\nObjections:\n${harm.map((i, k) => `${k + 1}. ${i.problem}`).join('\n')}\n\nReply with ONLY this JSON:\n{"verdicts":[{"id":1,"confirmed":true,"evidence":"exact words from the message"}]}`,
+            converse,
+            deadline,
+            validate: (t) => parseVerification(t, harm.length),
+          });
+          check.value.forEach((v, k) => {
+            if (!(v.confirmed && evidenceInMessage(v.evidence, guidance))) {
+              Object.assign(harm[k], { severity: 'minor', problem: `${harm[k].problem} (not confirmed on a second reading)` });
+            }
+          });
+          out.usage.inputTokens += check.usage.inputTokens;
+          out.usage.outputTokens += check.usage.outputTokens;
+          out.verified = harm.length;
+        } catch {
+          // The objections stand as they were: when in doubt, block.
+        }
+        out.verdict = out.issues.some((i) => i.severity === 'blocking') ? 'revise' : 'approve';
+      }
+      return out;
     },
   };
 }

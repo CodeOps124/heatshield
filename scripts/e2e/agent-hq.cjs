@@ -22,7 +22,10 @@ const RUN_AGENTS = args.includes('--run-agents');
   const fail = (msg) => { throw new Error(msg); };
   const open = async (label, opts) => {
     const p = await (await browser.newContext(opts)).newPage();
-    p.on('console', (m) => { if (m.type() === 'error') errors.push(`${label}: ${m.text()}`); });
+    p.on('console', (m) => {
+      // A shared cooldown answering 429 is designed behaviour, but Chrome logs any 4xx as an error.
+      if (m.type() === 'error' && !(RUN_AGENTS && /status of 429/.test(m.text()))) errors.push(`${label}: ${m.text()}`);
+    });
     p.on('pageerror', (e) => errors.push(`${label}: ${e.message}`));
     return p;
   };

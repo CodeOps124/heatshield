@@ -8,7 +8,7 @@ import { runAgent, extractJson } from '../functions/lib/agent-runtime.mjs';
 import { createAgentLog } from '../functions/lib/agent-log.mjs';
 import { createGuidanceService } from '../functions/lib/guidance.mjs';
 import { parseLanguageReview } from '../functions/lib/agents/language-reviewer.mjs';
-import { parseSafetyReview } from '../functions/lib/agents/safety-reviewer.mjs';
+import { parseSafetyReview, createSafetyReviewer, evidenceInMessage } from '../functions/lib/agents/safety-reviewer.mjs';
 import { runSentinel, headlineFor } from '../functions/lib/agents/sentinel.mjs';
 import { runCoordinator } from '../functions/lib/agents/coordinator.mjs';
 import { triage, runWatchdog } from '../functions/lib/agents/watchdog.mjs';
@@ -390,6 +390,34 @@ test('Reviewers 12:05 UTC: the objections from three live evaluations, sorted in
   assert.equal(vera('d', 'The message does not explicitly instruct to call the local emergency number for heat-stroke signs.'), 'blocking');
   assert.equal(vera('b', 'Advising the use of a fan as a primary cooling method during very hot conditions is against the safety guidelines.'), 'blocking');
   assert.equal(vera('c', 'Recommends a hot bath to relax.'), 'blocking');
+});
+
+test('Vera 12:24 UTC: a harm objection must survive a second reading that points at the exact words', async () => {
+  const plan = {
+    headline: 'حرارة خطيرة اليوم.',
+    actions: ['قلل العمل البدني حتى الساعة 03:00 من الغد.', 'اشرب كوبًا من الماء كل 15 إلى 20 دقيقة.', 'احتفظ بمنطقة النوم باردة قدر الإمكان، وارتدِ ملابس خفيفة.'],
+    seekHelp: 'إذا شعرت بالارتباك أو الإغماء، اتصل برقم الطوارئ المحلي.',
+  };
+  assert.equal(evidenceInMessage('«احتفظ بمنطقة النوم باردة قدر الإمكان»', plan), true, 'punctuation and quotes do not matter');
+  assert.equal(evidenceInMessage('وارتد ملابس خفيفة', plan), true, 'a copy without the kasra still matches');
+  assert.equal(evidenceInMessage('استخدم الماء البارد', plan), false);
+
+  const objection = { quote: 'احتفظ بمنطقة النوم باردة قدر الإمكان', rule: 'c', problem: 'Cold water as the main cooling can lower body temperature too quickly.' };
+  const run = (verdict) => {
+    const replies = [text(JSON.stringify({ issues: [objection] })), text(JSON.stringify({ verdicts: [verdict] }))];
+    return createSafetyReviewer({ converse: async () => replies.shift(), models: ['m'] }).review(plan, { factsList: '- x', situation: '- y', deadline: Date.now() + 20_000 });
+  };
+  const hallucinated = await run({ id: 1, confirmed: false, evidence: '' });
+  assert.equal(hallucinated.verdict, 'approve');
+  assert.match(hallucinated.issues[0].problem, /not confirmed on a second reading/);
+  const inventedEvidence = await run({ id: 1, confirmed: true, evidence: 'استخدم الماء البارد للتبريد' });
+  assert.equal(inventedEvidence.verdict, 'approve', 'evidence that is not in the message does not count');
+  const real = await run({ id: 1, confirmed: true, evidence: 'احتفظ بمنطقة النوم باردة قدر الإمكان' });
+  assert.equal(real.verdict, 'revise', 'a confirmed objection with real evidence still blocks');
+
+  const broken = [text(JSON.stringify({ issues: [objection] })), text('no json here'), text('still none')];
+  const unsure = await createSafetyReviewer({ converse: async () => broken.shift(), models: ['m'] }).review(plan, { factsList: '- x', situation: '- y', deadline: Date.now() + 20_000 });
+  assert.equal(unsure.verdict, 'revise', 'if the second reading fails, the objection stands');
 });
 
 test('Kai: empty groups (left by end-to-end tests) are skipped, not counted as planned', async () => {
