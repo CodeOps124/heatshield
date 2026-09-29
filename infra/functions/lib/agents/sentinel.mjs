@@ -26,13 +26,18 @@ const MAX_AREAS = 40;
 const snap = (x) => Math.round(x / CLIMATE_GRID) * CLIMATE_GRID;
 const clean = (s, n) => (typeof s === 'string' ? s.replace(/\s+/g, ' ').trim().slice(0, n) : '');
 
-/** 30-year climatology per ERA5 cell, computed once and cached forever in the agent log. */
+/**
+ * 30-year climatology per ERA5 cell, computed once and cached forever in the agent log.
+ * A 30-year daily download is heavy for Open-Meteo's per-minute limit (the first live runs lost
+ * areas to it), so `get(..., { allowFetch: false })` returns null instead of downloading.
+ */
 export function createClimateService({ agentLog, fetchImpl = globalThis.fetch }) {
   return {
-    async get(lat, lon) {
+    async get(lat, lon, { allowFetch = true } = {}) {
       const key = `climate#${snap(lat).toFixed(2)},${snap(lon).toFixed(2)}`;
       const cached = await agentLog.getState('sol', key);
       if (cached?.t95) return cached;
+      if (!allowFetch) return null;
       const url = `https://archive-api.open-meteo.com/v1/archive?latitude=${snap(lat)}&longitude=${snap(lon)}&start_date=1991-01-01&end_date=2020-12-31&daily=temperature_2m_max,temperature_2m_min&timezone=auto`;
       const res = await fetchImpl(url, { signal: AbortSignal.timeout(20_000) });
       if (!res.ok) throw new Error(`Open-Meteo archive HTTP ${res.status}`);
@@ -47,7 +52,7 @@ export function createClimateService({ agentLog, fetchImpl = globalThis.fetch })
 
 /** Algorithmic ceiling: the most severe level the evidence supports. */
 export function evidenceCeiling(area) {
-  const worstEhf = area.ehf.worst?.severity ?? 'none';
+  const worstEhf = area.ehf?.worst?.severity ?? 'none';
   const worstTier = area.hiDays.reduce((w, d) => Math.max(w, tierRank(d.tier)), 0);
   if (worstEhf === 'extreme' || worstTier >= tierRank('extreme_danger')) return 'emergency';
   if (worstEhf === 'severe' || worstTier >= tierRank('danger')) return 'warning';
@@ -109,26 +114,46 @@ export function parseSentinelOutput(text, candidates) {
   return { briefing, events };
 }
 
+const NEW_CLIMATES_PER_RUN = 3;
+
 export async function runSentinel({ store, weather, climate, agentLog, converse, models, deadline = Date.now() + 240_000, nowMs = () => Date.now() }) {
   const areas = buildAreas(await store.listAllLocations());
   const failures = [];
 
+  // Climatologies first, sequentially, with a download budget; cached ones cost nothing.
+  let downloads = 0;
+  for (const area of areas) {
+    try {
+      area.clim = await climate.get(area.lat, area.lon, { allowFetch: false });
+      if (!area.clim && downloads < NEW_CLIMATES_PER_RUN) {
+        downloads += 1;
+        area.clim = await climate.get(area.lat, area.lon);
+      }
+    } catch (err) {
+      area.clim = null;
+      failures.push({ areaId: area.areaId, place: area.place, stage: 'climate', message: err.message });
+    }
+  }
+
   await mapLimit(areas, 4, async (area) => {
     try {
-      const [daily, forecast, clim] = await Promise.all([
+      const [daily, forecast] = await Promise.all([
         weather.getDaily(area.lat, area.lon),
         weather.getForecast(area.lat, area.lon),
-        climate.get(area.lat, area.lon),
       ]);
-      area.ehf = assessEhf({ dates: daily.dates, tmax: daily.tmax, tmin: daily.tmin, today: daily.today, climate: clim });
-      area.climate = { t95: round1(clim.t95), ehf85: round1(clim.ehf85), period: clim.period };
+      const clim = area.clim;
+      // No climatology yet (budget or download failure): judge on heat index alone this hour.
+      area.ehf = clim
+        ? assessEhf({ dates: daily.dates, tmax: daily.tmax, tmin: daily.tmin, today: daily.today, climate: clim })
+        : { days: [], worst: null, heatwave: false, climatePending: true };
+      area.climate = clim ? { t95: round1(clim.t95), ehf85: round1(clim.ehf85), period: clim.period } : null;
       area.hiDays = assessRisk(forecast, 'general').outlook.map((d) => ({ date: d.date, tier: d.tier, maxHeatIndexC: d.maxHeatIndexC }));
       const future = daily.dates.map((d, i) => [d, daily.tmax[i]]).filter(([d]) => d >= daily.today);
       area.tmaxTrendCPerDay = round1(linearRegression(future.map((_, i) => i), future.map(([, t]) => t)).slope);
       area.tropicalNights = daily.dates.filter((d, i) => d >= daily.today && daily.tmin[i] > 20).length;
       area.ceiling = evidenceCeiling(area);
     } catch (err) {
-      failures.push({ areaId: area.areaId, message: err.message });
+      failures.push({ areaId: area.areaId, place: area.place, stage: 'forecast', message: err.message });
       area.error = err.message;
     }
   });
@@ -136,7 +161,7 @@ export async function runSentinel({ store, weather, climate, agentLog, converse,
   const assessed = areas.filter((a) => !a.error);
   const candidates = assessed.filter((a) => a.ceiling);
   const areaSummary = assessed.map((a) => ({
-    areaId: a.areaId, place: a.place, people: a.people, ceiling: a.ceiling,
+    areaId: a.areaId, place: a.place, people: a.people, ceiling: a.ceiling, climatePending: Boolean(a.ehf.climatePending),
     ehfWorst: a.ehf.worst ? { date: a.ehf.worst.date, ehf: a.ehf.worst.ehf, severity: a.ehf.worst.severity } : null,
     worstTier: a.hiDays.reduce((w, d) => (tierRank(d.tier) > tierRank(w) ? d.tier : w), 'lower'),
   }));
@@ -163,7 +188,7 @@ export async function runSentinel({ store, weather, climate, agentLog, converse,
   const signal = (c) => ({
     areaId: c.areaId, place: c.place, people: c.people, vulnerablePeople: c.vulnerable, outdoorWorkers: c.workers,
     evidenceCeiling: c.ceiling,
-    excessHeatFactor: c.ehf.days.map((d) => ({ date: d.date, ehf: d.ehf, severity: d.severity })),
+    excessHeatFactor: c.ehf.climatePending ? 'not available yet (local climatology still being computed)' : c.ehf.days.map((d) => ({ date: d.date, ehf: d.ehf, severity: d.severity })),
     heatIndexByDay: c.hiDays, tmaxTrendCPerDay: c.tmaxTrendCPerDay, tropicalNightsAhead: c.tropicalNights,
   });
   const run = await runAgent({
@@ -172,7 +197,7 @@ export async function runSentinel({ store, weather, climate, agentLog, converse,
       models,
       maxTurns: 5,
       maxTokens: 1500,
-      system: 'You are Sol, HeatShield\'s heat sentinel: an operational heat-health forecaster. You read algorithmic heat signals (Excess Heat Factor against local 1991-2020 climate, US National Weather Service heat-index tiers, temperature trend, tropical nights) and decide which areas need a heat watch, warning or emergency, whether each is new, escalating, steady or easing compared with your previous briefing, and you write a short situation briefing for community health workers. Use the tools. Never exceed an area\'s evidenceCeiling. Be factual and calm; name places and dates.',
+      system: 'You are Sol, HeatShield\'s heat sentinel: an operational heat-health forecaster. You read algorithmic heat signals (Excess Heat Factor against local 1991-2020 climate, US National Weather Service heat-index tiers, temperature trend, tropical nights) and decide which areas need a heat watch, warning or emergency, whether each is new, escalating, steady or easing compared with your previous briefing, and you write a short situation briefing for community health workers. Use the tools. Never exceed an area\'s evidenceCeiling. Write for non-specialists: plain words, no jargon or acronyms (say "unusually hot for this place and time of year" instead of "positive EHF", and "dangerous heat and humidity" instead of "danger-tier heat index"). Be factual and calm; name places and weekdays or dates.',
       tools: [
         { name: 'list_heat_signals', description: 'All watched areas with a heat signal, with the algorithm\'s evidence.', inputSchema: { type: 'object', properties: {} }, handler: async () => ({ areas: candidates.map(signal) }) },
         {
@@ -193,12 +218,13 @@ export async function runSentinel({ store, weather, climate, agentLog, converse,
         },
       ],
     },
-    input: `It is ${new Date(nowMs()).toISOString()}. ${candidates.length} of ${assessed.length} watched areas show a heat signal. Investigate with your tools, then reply with ONLY this JSON:\n{"briefing":"3-5 sentences","events":[{"areaId":"A1","level":"watch|warning|emergency","trend":"new|escalating|steady|easing","headline":"one line","reason":"cite the evidence (EHF, tiers, dates)"}]}`,
+    input: `It is ${new Date(nowMs()).toISOString()}. ${candidates.length} of ${assessed.length} watched areas show a heat signal. Investigate with your tools, then reply with ONLY this JSON:\n{"briefing":"3-5 plain-language sentences","events":[{"areaId":"A1","level":"watch|warning|emergency","trend":"new|escalating|steady|easing","headline":"one plain-language line","reason":"cite the evidence (EHF, tiers, dates)"}]}`,
     converse,
     deadline,
+    validate: (text) => parseSentinelOutput(text, candidates),
   });
 
-  const { briefing, events } = parseSentinelOutput(run.text, candidates);
+  const { briefing, events } = run.value;
   const enriched = events.map((e) => {
     const a = candidates.find((c) => c.areaId === e.areaId);
     return { ...e, place: a.place, lat: a.lat, lon: a.lon, people: a.people, ehfWorst: a.ehf.worst, ceiling: a.ceiling };

@@ -253,9 +253,9 @@ test('Otto triage: site down beats everything; slow or overdue is degraded', () 
 test('Otto: healthy runs cost no model call; a new incident is investigated and published once', async () => {
   const { db, tables } = createFakeDb();
   const agentLog = createAgentLog({ db, table: tables.agentLog });
-  const page = { site: 'HeatShield', health: '{"ok":true}', risk: '{"risk":{}}', agents: '{"agents":[]}' };
+  const page = { site: 'HeatShield', health: '{"ok":true}', risk: '{"risk":{}}', agents: '{"agents":[]}', openmeteo: '{"current":{"temperature_2m":31}}' };
   const fetchImpl = async (url) => {
-    const body = url.endsWith('/') ? page.site : url.includes('health') ? page.health : url.includes('risk') ? page.risk : page.agents;
+    const body = url.includes('open-meteo') ? page.openmeteo : url.endsWith('/') ? page.site : url.includes('health') ? page.health : url.includes('risk') ? page.risk : page.agents;
     return { status: 200, text: async () => body };
   };
   const logs = { count: async () => 0, sample: async () => [] };

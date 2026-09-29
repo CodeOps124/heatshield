@@ -55,12 +55,15 @@ export function extractJson(text) {
  * @param {string} p.input       the task, as text
  * @param {Function} p.converse  (params, opts) => Bedrock Converse response
  * @param {number} [p.deadline]  epoch ms; the run is abandoned after this
- * @returns {{ text, model, turns, toolCalls, usage, stopReason }}
+ * @param {Function} [p.validate] (text) => value; throws if the answer is unusable. On failure the
+ *                                model gets `repairs` extra turns to correct itself (seeing the error),
+ *                                e.g. when it emits malformed JSON — observed live on 2026-09-29.
+ * @returns {{ text, value, model, turns, toolCalls, usage, stopReason, repaired }}
  */
-export async function runAgent({ agent, input, converse, deadline = Date.now() + 20_000, now = Date.now }) {
+export async function runAgent({ agent, input, converse, deadline = Date.now() + 20_000, now = Date.now, validate = null, repairs = 1 }) {
   const tools = agent.tools ?? [];
   const byName = new Map(tools.map((t) => [t.name, t]));
-  const maxTurns = agent.maxTurns ?? 6;
+  const maxTurns = (agent.maxTurns ?? 6) + (validate ? repairs : 0);
   const usage = { inputTokens: 0, outputTokens: 0 };
   const toolCalls = [];
   let lastError;
@@ -69,6 +72,8 @@ export async function runAgent({ agent, input, converse, deadline = Date.now() +
   // conversation would mix tool-use ids between providers).
   for (const modelId of agent.models.filter(Boolean)) {
     const messages = [{ role: 'user', content: [{ text: input }] }];
+    let repairsLeft = validate ? repairs : 0;
+    let repaired = 0;
     try {
       for (let turn = 1; turn <= maxTurns; turn += 1) {
         const remaining = deadline - now();
@@ -115,7 +120,16 @@ export async function runAgent({ agent, input, converse, deadline = Date.now() +
 
         if (res.stopReason === 'max_tokens') throw new AgentError('Agent output was truncated', { code: 'truncated' });
         const text = (message.content ?? []).map((c) => c.text ?? '').join('').trim();
-        return { text, model: modelId, turns: turn, toolCalls, usage, stopReason: res.stopReason };
+        if (!validate) return { text, model: modelId, turns: turn, toolCalls, usage, stopReason: res.stopReason, repaired };
+        try {
+          const value = validate(text);
+          return { text, value, model: modelId, turns: turn, toolCalls, usage, stopReason: res.stopReason, repaired };
+        } catch (err) {
+          if (repairsLeft <= 0) throw new AgentError(`Output failed validation: ${err.message}`, { code: 'invalid_output', cause: err });
+          repairsLeft -= 1;
+          repaired += 1;
+          messages.push({ role: 'user', content: [{ text: `Your reply could not be used: ${err.message}. Reply again with ONLY the corrected JSON object and nothing else.` }] });
+        }
       }
       throw new AgentError(`Agent did not finish within ${maxTurns} turns`, { code: 'max_turns' });
     } catch (err) {

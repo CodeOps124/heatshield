@@ -187,6 +187,19 @@ export function createEnrollmentApi({ store, notifier, weather, agentLog = null,
       return json(200, { coordinator: await coordinatorPlan(agentLog, group.groupId, members) });
     },
 
+    // Leader deletes the whole group: every member's registration, alerts and email subscription,
+    // the coordinator's plan, and the group itself.
+    'DELETE /api/groups/{groupId}': async (event) => {
+      const group = await requireGroupAdmin(event);
+      if (group.readOnly) throw new HttpError(403, 'read_only', 'This demo group is read-only.');
+      const members = await store.listGroupMembers(group.groupId);
+      for (const m of members) await removeLocation(m);
+      if (agentLog?.deleteState) await agentLog.deleteState('kai', `group#${group.groupId}`).catch(() => {});
+      await store.deleteGroup(group.groupId);
+      log.info('group_deleted', { groupId: group.groupId, membersRemoved: members.length });
+      return json(200, { deleted: true, membersRemoved: members.length });
+    },
+
     'DELETE /api/groups/{groupId}/members/{locationId}': async (event) => {
       const group = await requireGroupAdmin(event);
       if (group.readOnly) throw new HttpError(403, 'read_only', 'This demo group is read-only.');

@@ -101,6 +101,7 @@ export function parseCoordinatorOutput(text, schedule) {
 
 async function planGroup({ group, store, weather, agentLog, converse, models, nowMs, deadline, sentinel }) {
   const members = await store.listGroupMembers(group.groupId);
+  if (members.length === 0) return null; // nothing to plan for an empty group
   const risks = await riskForMany(weather, members);
   const schedule = buildCheckInSchedule(members, risks, nowMs());
   if (schedule.length === 0) {
@@ -143,9 +144,10 @@ async function planGroup({ group, store, weather, agentLog, converse, models, no
     input: `Plan today's heat check-ins for the group "${group.name}". Use your tools, then reply with ONLY this JSON:\n{"summary":"2-3 sentences for the leader","checkIns":[{"ref":"M1","action":"...","reason":"..."}],"teamNote":"one line for the whole group"}`,
     converse,
     deadline,
+    validate: (text) => parseCoordinatorOutput(text, forModel),
   });
 
-  const parsed = parseCoordinatorOutput(run.text, forModel);
+  const parsed = run.value;
   const rest = schedule.slice(MAX_FOR_MODEL).map((s) => ({ ...s, action: templateAction(s), reason: `${TIER_LABELS[s.next12Tier]} expected.`, writtenBy: 'template' }));
   const plan = {
     allClear: false,
@@ -172,6 +174,7 @@ export async function runCoordinator({ store, weather, agentLog, converse, model
   for (const group of groups.slice(0, 20)) {
     if (deadline - nowMs() < 20_000) break;
     const r = await planGroup({ group, store, weather, agentLog, converse, models, nowMs, deadline, sentinel });
+    if (!r) continue;
     planned += 1;
     checkIns += r.plan.checkIns.length;
     usage.inputTokens += r.usage.inputTokens;

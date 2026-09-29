@@ -37,6 +37,8 @@ export function createAgentLog({ db, table, nowMs = () => Date.now() }) {
       const item = await db.get({ table, key: { pk: `state#${agent}`, sk: key } });
       return item ? { ...item.value, updatedAt: item.updatedAt } : null;
     },
+
+    deleteState: (agent, key) => db.delete({ table, key: { pk: `state#${agent}`, sk: key } }),
   };
 }
 

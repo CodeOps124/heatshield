@@ -227,7 +227,7 @@ Resources:
         - DynamoDBCrudPolicy: { TableName: !Ref GroupsTable }
         - DynamoDBCrudPolicy: { TableName: !Ref LocationsTable }
         - DynamoDBCrudPolicy: { TableName: !Ref AlertsTable }
-        - DynamoDBReadPolicy: { TableName: !Ref AgentLogTable }
+        - DynamoDBCrudPolicy: { TableName: !Ref AgentLogTable } # read plans; delete a deleted group's plan
         - LambdaInvokePolicy: { FunctionName: !Ref CoordinatorFunction }
         - Statement:
             - Sid: SubscribeEmailToAlerts
@@ -250,6 +250,7 @@ Resources:
         GetLocation: { Type: HttpApi, Properties: { ApiId: !Ref HttpApi, Method: GET, Path: '/api/locations/{locationId}' } }
         DeleteLocation: { Type: HttpApi, Properties: { ApiId: !Ref HttpApi, Method: DELETE, Path: '/api/locations/{locationId}' } }
         RequestPlan: { Type: HttpApi, Properties: { ApiId: !Ref HttpApi, Method: POST, Path: '/api/groups/{groupId}/plan' } }
+        DeleteGroup: { Type: HttpApi, Properties: { ApiId: !Ref HttpApi, Method: DELETE, Path: '/api/groups/{groupId}' } }
 
   AlertCheckFunction:
     Type: AWS::Serverless::Function

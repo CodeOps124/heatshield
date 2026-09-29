@@ -63,7 +63,7 @@ export function formatAlert({ location, risk, guidance, siteUrl, test = false })
 }
 
 export async function runAlertCheck({ store, weather, guidance, notifier, log, siteUrl, forceLocationId = null }) {
-  const summary = { checked: 0, sent: 0, dashboardOnly: 0, quiet: 0, belowThreshold: 0, alreadyAlerted: 0, errors: 0 };
+  const summary = { checked: 0, sent: 0, dashboardOnly: 0, pendingConfirmation: 0, quiet: 0, belowThreshold: 0, alreadyAlerted: 0, errors: 0 };
 
   let locations;
   if (forceLocationId) {
@@ -103,6 +103,14 @@ export async function runAlertCheck({ store, weather, guidance, notifier, log, s
         return;
       }
 
+      // SNS silently drops messages to subscriptions that were never confirmed. Publishing to one
+      // (as the first live run did at 02:00 UTC 2026-09-29) would record "emailed" for an email
+      // nobody received, so unconfirmed subscribers are treated as dashboard-only.
+      let emailState = location.subscriptionArn ? 'confirmed' : 'none';
+      if (location.subscriptionArn && notifier.subscriptionStatus) {
+        emailState = await notifier.subscriptionStatus(location.subscriptionArn).catch(() => 'unknown');
+      }
+
       const alertDate = risk.localTime.slice(0, 10);
       const tier = risk.alert.levelTier;
       const claimed = await store.claimAlert({
@@ -113,12 +121,14 @@ export async function runAlertCheck({ store, weather, guidance, notifier, log, s
         return;
       }
 
-      if (!location.subscriptionArn) {
-        // Nobody to email (e.g. a member enrolled by a leader without contact details):
-        // record the alert so it shows on the leader's dashboard.
-        await store.finalizeAlert({ locationId: location.locationId, alertDate, status: 'dashboard_only', channel: 'dashboard' });
+      if (emailState === 'none' || emailState === 'pending') {
+        // Nobody to email (a member enrolled without contact details, or an email not yet
+        // confirmed): record the alert so it shows on the leader's dashboard.
+        const channel = emailState === 'pending' ? 'dashboard (email not confirmed yet)' : 'dashboard';
+        await store.finalizeAlert({ locationId: location.locationId, alertDate, status: 'dashboard_only', channel });
         summary.dashboardOnly += 1;
-        log.info('alert_recorded_dashboard_only', { locationId: location.locationId, tier, forced });
+        if (emailState === 'pending') summary.pendingConfirmation += 1;
+        log.info('alert_recorded_dashboard_only', { locationId: location.locationId, tier, forced, emailState });
         return;
       }
 

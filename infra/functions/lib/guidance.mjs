@@ -25,10 +25,11 @@ import { fallbackGuidance } from './fallback-guidance.mjs';
 import { createBm25Index } from './algorithms/bm25.mjs';
 import { FACTS } from './agents/facts.mjs';
 
-export const PROMPT_VERSION = 'v3'; // v3: BM25-retrieved facts + reviewer loop
+export const PROMPT_VERSION = 'v4'; // v4: calibrated reviewers (blocking vs minor), emergency line required
 const CACHE_TTL_SECONDS = 6 * 60 * 60;
 const MODEL_TIMEOUT_MS = 9000;
 const DEFAULT_BUDGET_MS = 22_000;
+const MAX_REVISIONS = 2;
 
 const PROFILE_DESCRIPTIONS = {
   outdoor_worker: 'an outdoor worker doing physical work (for example construction, farming, delivery)',
@@ -128,7 +129,7 @@ Reply with ONLY a JSON object and nothing else, in exactly this shape:
 {"headline": "...", "actions": ["...", "...", "..."], "seekHelp": "..."}
 - headline: one short sentence (at most 15 words) telling them how serious the heat is for them today.
 - actions: exactly 3 short, concrete steps for the coming hours (at most 30 words each), most important first.
-- seekHelp: one sentence naming the warning signs that mean they, or someone near them, must get help now.
+- seekHelp: one sentence naming heat-stroke warning signs (such as confusion or fainting) and telling them to call their local emergency number (written in ${languageName}).
 All text must be in ${languageName}.`;
 }
 
@@ -159,7 +160,12 @@ export function situationLines(input) {
 export function buildUserPrompt(input, feedback = null) {
   let prompt = `Forecast facts for this person:\n${situationLines(input)}\n\nWrite their message now, in ${LANGUAGES[input.language].name}.`;
   if (feedback) {
-    prompt += `\n\nYour previous draft was sent back by HeatShield's reviewers:\n${JSON.stringify(feedback.draft)}\nFix every issue they raised:\n${feedback.issues.map((i) => `- ${i.quote ? `"${i.quote}": ` : ''}${i.problem}${i.fix ? ` Fix: ${i.fix}` : ''}`).join('\n')}\nWrite the corrected message.`;
+    const line = (i) => `- ${i.quote ? `"${i.quote}": ` : ''}${i.problem}${i.fix ? ` Fix: ${i.fix}` : ''}`;
+    const must = feedback.issues.filter((i) => i.severity !== 'minor');
+    const optional = feedback.issues.filter((i) => i.severity === 'minor');
+    prompt += `\n\nYour previous draft was sent back by HeatShield's reviewers:\n${JSON.stringify(feedback.draft)}\nYou MUST fix:\n${must.map(line).join('\n')}`;
+    if (optional.length) prompt += `\nOptional suggestions (use only if they help):\n${optional.map(line).join('\n')}`;
+    prompt += '\nWrite the corrected message.';
   }
   return prompt;
 }
@@ -193,7 +199,7 @@ const summarizeReview = (r) =>
         verdict: r.verdict,
         model: r.model ?? null,
         method: r.method ?? null,
-        issues: (r.issues ?? []).map(({ quote, problem, fix, rule }) => ({ quote, problem, fix, rule })),
+        issues: (r.issues ?? []).map(({ quote, problem, fix, rule, category, severity }) => ({ quote, problem, fix, rule, category, severity })),
         ...(r.backTranslation ? { backTranslation: r.backTranslation } : {}),
         ...(r.detected ? { detected: r.detected } : {}),
         ...(r.error ? { error: r.error } : {}),
@@ -269,9 +275,14 @@ export function createGuidanceService({
           model: r.model,
           inputTokens: r.usage?.inputTokens ?? 0,
           outputTokens: r.usage?.outputTokens ?? 0,
-          summary: r.verdict === 'approve'
-            ? `Approved the ${LANGUAGES[ctx.language].name} plan${r.method ? ` (${r.method})` : ''}.`
-            : `Sent the ${LANGUAGES[ctx.language].name} plan back: ${r.issues.length} issue(s)${r.issues[0] ? `, e.g. ${r.issues[0].problem}` : ''}`,
+          summary: (() => {
+            const lang = LANGUAGES[ctx.language].name;
+            const blocking = r.issues.filter((i) => i.severity !== 'minor');
+            const minor = r.issues.length - blocking.length;
+            return r.verdict === 'approve'
+              ? `Approved the ${lang} plan${minor ? ` with ${minor} minor note(s)` : ''}.`
+              : `Sent the ${lang} plan back: ${blocking.length} blocking issue(s)${blocking[0] ? `, e.g. ${blocking[0].problem}` : ''}`;
+          })(),
           detail: {
             language: ctx.language,
             verdict: r.verdict,
@@ -338,22 +349,24 @@ export function createGuidanceService({
     }
 
     let verdict = await review(draft.guidance, ctx);
-    let revised = false;
+    let revisions = 0;
 
-    if (verdict.rejected && deadline - nowMs() > 10_000) {
+    // Up to two revision rounds, each only if there is time for a full write + review.
+    while (verdict.rejected && revisions < MAX_REVISIONS && deadline - nowMs() > 8_000) {
       const issues = [...(verdict.language.issues ?? []), ...(verdict.safety.issues ?? [])];
       try {
         draft = await write(input, facts, deadline, { draft: draft.guidance, issues });
-        revised = true;
+        revisions += 1;
         verdict = await review(draft.guidance, ctx);
       } catch {
-        return fallback('revision_failed', { status: 'rejected', language: summarizeReview(verdict.language), safety: summarizeReview(verdict.safety) });
+        return fallback('revision_failed', { status: 'rejected', revisions, language: summarizeReview(verdict.language), safety: summarizeReview(verdict.safety) });
       }
     }
 
     const reviewSummary = {
       status: verdict.skipped ? 'skipped' : verdict.approved ? 'approved' : verdict.rejected ? 'rejected' : 'unreviewed',
-      revised,
+      revised: revisions > 0,
+      revisions,
       language: summarizeReview(verdict.language),
       safety: summarizeReview(verdict.safety),
     };

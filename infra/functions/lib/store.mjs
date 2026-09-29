@@ -26,6 +26,8 @@ export function createStore({ db, tables, nowSeconds = () => Math.floor(Date.now
 
     listAllGroups: () => db.scanAll({ table: tables.groups }),
 
+    deleteGroup: (groupId) => db.delete({ table: tables.groups, key: { groupId } }),
+
     // ---------------- locations ----------------
     createLocation: (location) =>
       db.put({ table: tables.locations, item: location, condition: 'attribute_not_exists(locationId)' }),

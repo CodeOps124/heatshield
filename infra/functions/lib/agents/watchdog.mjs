@@ -14,11 +14,17 @@ import { createHash } from 'node:crypto';
 import { runAgent, extractJson } from '../agent-runtime.mjs';
 import { ewmaUpdate, ewmaAnomaly } from '../algorithms/stats.mjs';
 
+// `floor`: excess latency (ms) below which a control-chart signal is ignored. Probes that run
+// through Lambda + Open-Meteo see normal cold starts of 1-2 s; the first live incident (a 2.6 s
+// risk probe, 06:00 UTC 2026-09-29) was exactly that, so their floors are higher.
 export const PROBES = [
-  { id: 'site', path: '/', check: (status, body) => status === 200 && body.includes('HeatShield') },
-  { id: 'health', path: '/api/health', check: (status, body) => status === 200 && body.includes('"ok":true') },
-  { id: 'risk', path: '/api/risk?lat=25.2&lon=55.27&profile=general', check: (status, body) => status === 200 && body.includes('"risk"') },
-  { id: 'agents', path: '/api/agents', check: (status, body) => status === 200 && body.includes('"agents"') },
+  { id: 'site', path: '/', floor: 800, check: (status, body) => status === 200 && body.includes('HeatShield') },
+  { id: 'health', path: '/api/health', floor: 1500, check: (status, body) => status === 200 && body.includes('"ok":true') },
+  { id: 'risk', path: '/api/risk?lat=25.2&lon=55.27&profile=general', floor: 2500, check: (status, body) => status === 200 && body.includes('"risk"') },
+  { id: 'agents', path: '/api/agents', floor: 2500, check: (status, body) => status === 200 && body.includes('"agents"') },
+  // Dependency probe: the weather provider itself, bypassing HeatShield. Lets triage tell
+  // "our code is slow/broken" apart from "the upstream API is slow/broken".
+  { id: 'openmeteo', url: 'https://api.open-meteo.com/v1/forecast?latitude=25.2&longitude=55.27&current=temperature_2m', floor: 1500, upstream: true, check: (status, body) => status === 200 && body.includes('temperature_2m') },
 ];
 
 // How often each scheduled agent/worker must check in (minutes).
@@ -29,7 +35,7 @@ const clean = (s, n) => (typeof s === 'string' ? s.replace(/\s+/g, ' ').trim().s
 async function probe(fetchImpl, siteUrl, p, nowMs) {
   const started = nowMs();
   try {
-    const res = await fetchImpl(`${siteUrl}${p.path}`, { signal: AbortSignal.timeout(10_000), headers: { 'user-agent': 'HeatShield-Otto-Watchdog/1.0' } });
+    const res = await fetchImpl(p.url ?? `${siteUrl}${p.path}`, { signal: AbortSignal.timeout(10_000), headers: { 'user-agent': 'HeatShield-Otto-Watchdog/1.0' } });
     const body = await res.text();
     return { id: p.id, ok: p.check(res.status, body), status: res.status, ms: nowMs() - started };
   } catch (err) {
@@ -40,9 +46,18 @@ async function probe(fetchImpl, siteUrl, p, nowMs) {
 /** Deterministic triage: the facts the watchdog acts on. */
 export function triage({ probes, ewma, heartbeats, errors, modelFailures }) {
   const issues = [];
+  const upstream = probes.find((p) => p.id === 'openmeteo');
+  const upstreamTrouble = upstream && (!upstream.ok || ewma.openmeteo?.anomaly);
   for (const p of probes) {
-    if (!p.ok) issues.push({ code: `${p.id}_failing`, severity: p.id === 'site' || p.id === 'health' ? 'high' : 'medium', detail: `Probe ${p.id} failed (HTTP ${p.status}${p.error ? `, ${p.error}` : ''})` });
-    else if (ewma[p.id]?.anomaly) issues.push({ code: `${p.id}_slow`, severity: 'low', detail: `Probe ${p.id} took ${p.ms} ms, ${ewma[p.id].z}σ above its moving average` });
+    if (p.id === 'openmeteo') {
+      if (!p.ok) issues.push({ code: 'upstream_failing', severity: 'medium', detail: `Weather provider Open-Meteo failed (HTTP ${p.status}${p.error ? `, ${p.error}` : ''}); weather-dependent pages will degrade` });
+      else if (ewma.openmeteo?.anomaly) issues.push({ code: 'upstream_slow', severity: 'low', detail: `Weather provider Open-Meteo took ${p.ms} ms, ${ewma.openmeteo.z}σ above its moving average` });
+      continue;
+    }
+    // A weather-dependent probe that is slow while the provider is also slow is attributed upstream.
+    const weatherDependent = p.id === 'risk';
+    if (!p.ok) issues.push({ code: `${p.id}_failing`, severity: p.id === 'site' || p.id === 'health' ? 'high' : 'medium', detail: `Probe ${p.id} failed (HTTP ${p.status}${p.error ? `, ${p.error}` : ''})${weatherDependent && upstreamTrouble ? ' while Open-Meteo is also degraded' : ''}` });
+    else if (ewma[p.id]?.anomaly && !(weatherDependent && upstreamTrouble)) issues.push({ code: `${p.id}_slow`, severity: 'low', detail: `Probe ${p.id} took ${p.ms} ms, ${ewma[p.id].z}σ above its moving average` });
   }
   for (const h of heartbeats) if (h.overdue) issues.push({ code: `${h.agent}_overdue`, severity: 'medium', detail: `${h.agent} last ran ${h.minutesAgo ?? 'never'} min ago (expected every ${h.everyMin} min)` });
   for (const e of errors) if (e.count > 0) issues.push({ code: `${e.fn}_errors`, severity: 'medium', detail: `${e.count} error/timeout log line(s) in ${e.fn} in the last 15 min` });
@@ -78,7 +93,8 @@ export async function runWatchdog({ fetchImpl = globalThis.fetch, siteUrl, agent
   const nextEwma = {};
   for (const p of probes) {
     if (!p.ok) continue;
-    ewma[p.id] = ewmaAnomaly(prevEwma[p.id], p.ms, { k: 3, minSamples: 8, floor: 800 });
+    const floor = PROBES.find((x) => x.id === p.id)?.floor ?? 800;
+    ewma[p.id] = ewmaAnomaly(prevEwma[p.id], p.ms, { k: 3, minSamples: 8, floor });
     nextEwma[p.id] = ewmaUpdate(prevEwma[p.id], p.ms);
   }
   await agentLog.putState('otto', 'ewma', { ...prevEwma, ...nextEwma });
@@ -94,9 +110,10 @@ export async function runWatchdog({ fetchImpl = globalThis.fetch, siteUrl, agent
     fn,
     count: (await logs.count(group, '?"\\"level\\":\\"error\\"" ?"Task timed out"', since).catch(() => 0)),
   })));
-  const modelFailures = logGroups.publicApi
-    ? await logs.count(logGroups.publicApi, '"bedrock_guidance_failed"', nowMs() - 3600_000).catch(() => 0)
-    : 0;
+  // Guidance is generated in the public API AND in the alert loop; count primary-model failures in both
+  // (the first version only looked at the public API and missed failures in the 02:00 alert run).
+  const modelFailures = (await Promise.all(['publicApi', 'alertCheck'].filter((fn) => logGroups[fn]).map((fn) =>
+    logs.count(logGroups[fn], '"bedrock_guidance_failed"', nowMs() - 3600_000).catch(() => 0)))).reduce((a, b) => a + b, 0);
 
   const { status, issues } = triage({ probes, ewma, heartbeats, errors, modelFailures });
   const snapshot = {
@@ -142,8 +159,9 @@ export async function runWatchdog({ fetchImpl = globalThis.fetch, siteUrl, agent
     input: `Status: ${status}. Issues:\n${issues.map((i) => `- [${i.severity}] ${i.code}: ${i.detail}`).join('\n')}\nInvestigate, then reply with ONLY this JSON:\n{"severity":"low|medium|high","title":"...","summary":"...","likelyCause":"...","evidence":["..."],"recommendedAction":"..."}`,
     converse,
     deadline,
+    validate: parseIncident,
   });
-  const incident = { ...parseIncident(run.text), fingerprint, status, codes: issues.map((i) => i.code) };
+  const incident = { ...run.value, fingerprint, status, codes: issues.map((i) => i.code) };
   await agentLog.putState('otto', 'incident', incident);
   await agentLog.putState('otto', 'latest', { ...snapshot, incident: { ...incident, updatedAt: new Date(nowMs()).toISOString() } });
   if (publish) {
