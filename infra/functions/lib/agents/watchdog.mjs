@@ -43,8 +43,12 @@ async function probe(fetchImpl, siteUrl, p, nowMs) {
   }
 }
 
-/** Deterministic triage: the facts the watchdog acts on. */
-export function triage({ probes, ewma, heartbeats, errors, modelFailures }) {
+// A model that is not enabled on the account (Bedrock access or Anthropic use-case form) is a setup
+// state with the fallback serving, not an outage; any other failure still counts.
+const SETUP_ERROR = /AccessDenied|ResourceNotFound|use case details|not authorized|don't have access|do not have access/i;
+
+/** Deterministic triage: the facts the watchdog acts on. Issues with severity "info" do not degrade. */
+export function triage({ probes, ewma, heartbeats, errors, modelFailures, modelSetup = null }) {
   const issues = [];
   const upstream = probes.find((p) => p.id === 'openmeteo');
   const upstreamTrouble = upstream && (!upstream.ok || ewma.openmeteo?.anomaly);
@@ -61,9 +65,11 @@ export function triage({ probes, ewma, heartbeats, errors, modelFailures }) {
   }
   for (const h of heartbeats) if (h.overdue) issues.push({ code: `${h.agent}_overdue`, severity: 'medium', detail: `${h.agent} last ran ${h.minutesAgo ?? 'never'} min ago (expected every ${h.everyMin} min)` });
   for (const e of errors) if (e.count > 0) issues.push({ code: `${e.fn}_errors`, severity: 'medium', detail: `${e.count} error/timeout log line(s) in ${e.fn} in the last 15 min` });
-  if (modelFailures > 0) issues.push({ code: 'primary_model_failing', severity: 'low', detail: `${modelFailures} failed call(s) to the primary guidance model in the last hour (fallback model serving)` });
+  if (modelFailures > 0 && modelSetup) issues.push({ code: 'primary_model_not_enabled', severity: 'info', detail: `The primary guidance model is not enabled on this AWS account yet (${modelSetup.reason}); the fallback model is serving every request` });
+  else if (modelFailures > 0) issues.push({ code: 'primary_model_failing', severity: 'low', detail: `${modelFailures} failed call(s) to the primary guidance model in the last hour (fallback model serving)` });
   const down = probes.some((p) => (p.id === 'site' || p.id === 'health') && !p.ok);
-  return { status: down ? 'down' : issues.length ? 'degraded' : 'healthy', issues };
+  const degraded = issues.some((i) => i.severity !== 'info');
+  return { status: down ? 'down' : degraded ? 'degraded' : 'healthy', issues };
 }
 
 export function parseIncident(text) {
@@ -112,10 +118,22 @@ export async function runWatchdog({ fetchImpl = globalThis.fetch, siteUrl, agent
   })));
   // Guidance is generated in the public API AND in the alert loop; count primary-model failures in both
   // (the first version only looked at the public API and missed failures in the 02:00 alert run).
-  const modelFailures = (await Promise.all(['publicApi', 'alertCheck'].filter((fn) => logGroups[fn]).map((fn) =>
-    logs.count(logGroups[fn], '"bedrock_guidance_failed"', nowMs() - 3600_000).catch(() => 0)))).reduce((a, b) => a + b, 0);
+  const guidanceGroups = ['publicApi', 'alertCheck'].filter((fn) => logGroups[fn]).map((fn) => logGroups[fn]);
+  const modelFailures = (await Promise.all(guidanceGroups.map((g) =>
+    logs.count(g, '"bedrock_guidance_failed"', nowMs() - 3600_000).catch(() => 0)))).reduce((a, b) => a + b, 0);
+  // Read the actual errors: the first live incident report guessed "transient unavailability" when
+  // the logs said the Anthropic use-case form had not been submitted.
+  let modelSetup = null;
+  if (modelFailures > 0) {
+    const lines = (await Promise.all(guidanceGroups.map((g) => logs.sample(g, '"bedrock_guidance_failed"', nowMs() - 3600_000, 3).catch(() => [])))).flat();
+    const parsed = lines.map((l) => { try { return JSON.parse(l.line); } catch { return { message: String(l.line) }; } });
+    if (parsed.length && parsed.every((x) => SETUP_ERROR.test(`${x.error ?? ''} ${x.message ?? ''}`))) {
+      const last = parsed.at(-1);
+      modelSetup = { modelId: last.modelId ?? null, reason: `${last.error ? `${last.error}: ` : ''}${last.message ?? ''}`.slice(0, 200) };
+    }
+  }
 
-  const { status, issues } = triage({ probes, ewma, heartbeats, errors, modelFailures });
+  const { status, issues } = triage({ probes, ewma, heartbeats, errors, modelFailures, modelSetup });
   const snapshot = {
     status, issues,
     probes: probes.map((p) => ({ ...p, anomaly: Boolean(ewma[p.id]?.anomaly), z: ewma[p.id]?.z ?? null, avgMs: nextEwma[p.id] ? Math.round(nextEwma[p.id].mean) : null })),
@@ -124,7 +142,8 @@ export async function runWatchdog({ fetchImpl = globalThis.fetch, siteUrl, agent
 
   if (status === 'healthy') {
     await agentLog.putState('otto', 'latest', { ...snapshot, incident: null });
-    return { outcome: 'healthy', summary: `All ${probes.length} probes healthy (site ${probes[0].ms} ms); all agents on schedule.`, detail: snapshot };
+    const note = issues.some((i) => i.code === 'primary_model_not_enabled') ? ' Note: the primary model is not enabled on the account yet; the fallback is serving.' : '';
+    return { outcome: 'healthy', summary: `All ${probes.length} probes healthy (site ${probes[0].ms} ms); all agents on schedule.${note}`, detail: snapshot };
   }
 
   const fingerprint = createHash('sha1').update(issues.map((i) => i.code).sort().join('|')).digest('hex').slice(0, 12);

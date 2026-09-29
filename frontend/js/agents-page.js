@@ -17,6 +17,12 @@ const PLACES = [
   { name: 'Mombasa', lat: -4.04, lon: 39.67 }, { name: 'Manila', lat: 14.6, lon: 120.98 },
 ];
 
+// Profiles as they read in a sentence ("a plan for a pregnant person", not "for pregnant").
+const WHO = {
+  outdoor_worker: 'an outdoor worker', elderly: 'an older adult', chronic_condition: 'someone with a chronic condition',
+  child: 'a young child', pregnant: 'a pregnant person', general: 'the general public',
+};
+
 let data = null;
 let selected = 'sol';
 
@@ -144,6 +150,7 @@ function specialFor(a) {
             el('td', {}, p.id), el('td', {}, p.ok ? (p.anomaly ? 'slow' : 'ok') : `failed (${p.status})`),
             el('td', { class: 'num' }, `${p.ms} ms`), el('td', { class: 'num' }, p.avgMs ? `${p.avgMs} ms` : '—'))))),
         el('p', { class: 'hint' }, `Heartbeats: ${(w.heartbeats ?? []).map((h) => `${h.agent} ${h.minutesAgo ?? '—'} min ago`).join(' · ')}`),
+        (w.issues ?? []).filter((i) => i.severity === 'info').map((i) => el('p', { class: 'hint' }, `Note: ${i.detail}`)),
         w.incident ? el('div', { class: 'callout info mt-6' }, el('p', {}, el('strong', {}, `Last incident: ${w.incident.title}`), `${w.incident.summary} Likely cause: ${w.incident.likelyCause}`)) : null);
     }
     default: return null;
@@ -266,7 +273,7 @@ $('task-btn').addEventListener('click', async (e) => {
     lang = Object.keys(LANGUAGES)[Math.floor(Math.random() * Object.keys(LANGUAGES).length)];
   } while (`${place.name}${profile}${lang}` === lastTask);
   lastTask = `${place.name}${profile}${lang}`;
-  const who = PROFILES[profile].label.toLowerCase();
+  const who = WHO[profile] ?? PROFILES[profile].label.toLowerCase();
   const langName = LANGUAGES[lang].native;
 
   const out = $('task-result');

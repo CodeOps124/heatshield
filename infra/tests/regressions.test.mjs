@@ -287,6 +287,31 @@ test('Sol 11:30 UTC: a headline claimed dangerous heat in Cuiabá on Thursday (f
   assert.equal(headlineFor(split), 'Karachi: dangerous heat and humidity on Tuesday and Thursday');
 });
 
+test('Otto 11:36 UTC: a model that is not enabled on the account is a setup note, not "degraded"; real failures still degrade', async () => {
+  const probes = [{ id: 'site', ok: true, ms: 300 }];
+  const setup = triage({ probes, ewma: {}, heartbeats: [], errors: [], modelFailures: 1, modelSetup: { reason: 'ResourceNotFoundException: Model use case details have not been submitted' } });
+  assert.equal(setup.status, 'healthy');
+  assert.equal(setup.issues[0].code, 'primary_model_not_enabled');
+  assert.match(setup.issues[0].detail, /use case details have not been submitted/);
+
+  const { db, tables } = createFakeDb();
+  const agentLog = createAgentLog({ db, table: tables.agentLog });
+  const fetchImpl = async (url) => ({ status: 200, text: async () => (url.includes('open-meteo') ? '{"current":{"temperature_2m":31}}' : url.includes('health') ? '{"ok":true}' : url.includes('risk') ? '{"risk":{}}' : url.includes('agents') ? '{"agents":[]}' : 'HeatShield') });
+  const line = (error, message) => ({ at: '2026-09-29T11:30:00Z', line: JSON.stringify({ level: 'warn', msg: 'bedrock_guidance_failed', modelId: 'us.anthropic.claude-haiku-4-5-20251001-v1:0', error, message }) });
+  let sampled = [line('ResourceNotFoundException', 'Model use case details have not been submitted for this account.')];
+  const logs = { count: async (_g, pattern) => (pattern.includes('bedrock_guidance_failed') ? 1 : 0), sample: async () => sampled };
+  const deps = { fetchImpl, siteUrl: 'https://x.test', agentLog, logs, logGroups: { publicApi: 'g' }, models: ['m'], publish: async () => {} };
+  const ok = await runWatchdog({ ...deps, converse: async () => { throw new Error('no incident, no model call'); } });
+  assert.equal(ok.outcome, 'healthy');
+  assert.match(ok.summary, /primary model is not enabled on the account yet/);
+
+  sampled = [line('ThrottlingException', 'Too many requests, please wait before trying again.')];
+  const incident = { severity: 'low', title: 'Primary model throttled', summary: 'Throttled; fallback serving.', likelyCause: 'Bedrock throttling', evidence: ['1 failure'], recommendedAction: 'Watch the rate.' };
+  const replies = [text(JSON.stringify(incident))];
+  const bad = await runWatchdog({ ...deps, converse: async () => replies.shift() });
+  assert.equal(bad.outcome, 'degraded-reported');
+});
+
 test('Kai: empty groups (left by end-to-end tests) are skipped, not counted as planned', async () => {
   const { db, tables } = createFakeDb();
   const store = createStore({ db, tables });
