@@ -112,7 +112,7 @@ function specialFor(a) {
         s.briefedAt ? el('p', { class: 'hint' }, `Written ${ago(s.briefedAt)}; Sol re-checked the forecast ${ago(s.generatedAt)}.`) : null,
         el('p', {}, s.briefing),
         el('ul', { class: 'plain-list' }, (s.events ?? []).map((e) => el('li', {},
-          el('span', { class: `level ${e.level}` }, e.level), ' ', el('strong', {}, e.place), ` · ${e.trend} · ${e.headline}`,
+          el('span', { class: `level ${e.level}` }, e.level), ' ', el('strong', {}, e.place), ` · ${e.trend} · ${e.headline.replace(/^[^:]+:\s*/, '')}`,
           e.stale ? el('span', { class: 'hint' }, ' (earlier data: the forecast service refused this hour’s refresh)') : null))),
         stale.length ? el('p', { class: 'hint' }, `${stale.length} area(s) kept from earlier data this hour: ${stale.map((a) => a.place.split(',')[0]).join(', ')}. Open-Meteo refused the refresh, and Sol keeps the last good forecast for up to 3 hours instead of dropping an area.`) : null);
     }
