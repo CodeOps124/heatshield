@@ -214,7 +214,7 @@ test('Sol: jargon gets one plain-language rewrite; the trend comes from the prev
 
   const r1 = await run();
   assert.equal(r1.outcome, 'briefed');
-  assert.match(prompts[2], /use jargon \(tier, ehf\)/);
+  assert.match(prompts[2], /uses technical terms \(tier, ehf\)/);
   let state = await w.agentLog.getState('sol', 'latest');
   assert.equal(state.briefing, 'Extreme heat in Cuiabá through Thursday.');
   assert.equal(state.events[0].trend, 'new', 'no previous briefing, whatever the model says');

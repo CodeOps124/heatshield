@@ -9,7 +9,7 @@ import { createAgentLog } from '../functions/lib/agent-log.mjs';
 import { createGuidanceService } from '../functions/lib/guidance.mjs';
 import { parseLanguageReview } from '../functions/lib/agents/language-reviewer.mjs';
 import { parseSafetyReview } from '../functions/lib/agents/safety-reviewer.mjs';
-import { runSentinel } from '../functions/lib/agents/sentinel.mjs';
+import { runSentinel, headlineFor } from '../functions/lib/agents/sentinel.mjs';
 import { runCoordinator } from '../functions/lib/agents/coordinator.mjs';
 import { triage, runWatchdog } from '../functions/lib/agents/watchdog.mjs';
 import { runAlertCheck } from '../functions/lib/alert-runner.mjs';
@@ -269,6 +269,22 @@ test('Sol: an area refused once is retried after a pause and counts as fresh', a
   const state = await w.agentLog.getState('sol', 'latest');
   assert.deepEqual(state.failures, []);
   assert.equal(state.areas[0].stale, undefined);
+});
+
+test('Sol 11:30 UTC: a headline claimed dangerous heat in Cuiabá on Thursday (forecast: one tier lower); headlines now come from the numbers', () => {
+  const tiers = (list) => list.map(([date, tier]) => ({ date, tier }));
+  const cuiaba = {
+    place: 'Cuiabá, Brazil',
+    hiDays: tiers([['2026-09-29', 'extreme_caution'], ['2026-09-30', 'danger'], ['2026-10-01', 'extreme_caution'], ['2026-10-02', 'extreme_caution']]),
+    ehf: { worst: { severity: 'low-intensity' }, days: [{ date: '2026-09-29', severity: 'low-intensity' }, { date: '2026-09-30', severity: 'none' }] },
+  };
+  assert.equal(headlineFor(cuiaba), 'Cuiabá: dangerous heat and humidity on Wednesday; hotter than usual for this time of year on Tuesday');
+  const dubai = { place: 'Dubai, United Arab Emirates', hiDays: tiers([['2026-09-29', 'danger'], ['2026-09-30', 'danger'], ['2026-10-01', 'danger'], ['2026-10-02', 'danger']]), ehf: { worst: { severity: 'none' }, days: [] } };
+  assert.equal(headlineFor(dubai), 'Dubai: dangerous heat and humidity from Tuesday to Friday');
+  const hcmc = { place: 'Ho Chi Minh City, Vietnam', hiDays: tiers([['2026-09-29', 'extreme_caution'], ['2026-09-30', 'danger'], ['2026-10-01', 'extreme_danger']]), ehf: null };
+  assert.equal(headlineFor(hcmc), 'Ho Chi Minh City: extremely dangerous heat and humidity on Thursday');
+  const split = { place: 'Karachi', hiDays: tiers([['2026-09-29', 'danger'], ['2026-09-30', 'caution'], ['2026-10-01', 'danger']]), ehf: null };
+  assert.equal(headlineFor(split), 'Karachi: dangerous heat and humidity on Tuesday and Thursday');
 });
 
 test('Kai: empty groups (left by end-to-end tests) are skipped, not counted as planned', async () => {

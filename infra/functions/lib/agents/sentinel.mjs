@@ -90,6 +90,36 @@ export function buildAreas(locations) {
 const JARGON = /\b(?:tiers?|EHF|excess heat factors?|evidence ceiling)\b/gi;
 export const findJargon = (text) => [...new Set((String(text).match(JARGON) ?? []).map((m) => m.toLowerCase()))];
 
+const WEEKDAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+const weekday = (date) => WEEKDAYS[new Date(`${date}T12:00:00Z`).getUTCDay()];
+function days(dates) {
+  const names = dates.map(weekday);
+  const consecutive = dates.every((d, i) => i === 0 || Date.parse(d) - Date.parse(dates[i - 1]) === 86_400_000);
+  if (names.length >= 3 && consecutive) return `from ${names[0]} to ${names.at(-1)}`;
+  return `on ${names.length > 1 ? `${names.slice(0, -1).join(', ')} and ${names.at(-1)}` : names[0]}`;
+}
+
+/**
+ * The line people read first for each event, written from the numbers so it cannot misstate a day.
+ * (Seen live: the model wrote "dangerous heat on Wednesday and Thursday" for a city whose Thursday
+ * was one tier lower.)
+ */
+export function headlineFor(area) {
+  const at = (tiers) => area.hiDays.filter((d) => tiers.includes(d.tier)).map((d) => d.date);
+  const extreme = at(['extreme_danger']);
+  const danger = at(['danger', 'extreme_danger']);
+  const parts = [];
+  if (extreme.length) parts.push(`extremely dangerous heat and humidity ${days(extreme)}`);
+  else if (danger.length) parts.push(`dangerous heat and humidity ${days(danger)}`);
+  const worst = area.ehf?.worst?.severity ?? 'none';
+  const hot = (area.ehf?.days ?? []).filter((d) => d.severity !== 'none').map((d) => d.date);
+  if (worst !== 'none' && hot.length) {
+    const what = { extreme: 'an extreme heatwave for this time of year', severe: 'a severe heatwave for this time of year' }[worst] ?? 'hotter than usual for this time of year';
+    parts.push(`${what} ${days(hot)}`);
+  }
+  return `${area.place.split(',')[0]}: ${parts.join('; ') || 'a heat signal'}`;
+}
+
 export function parseSentinelOutput(text, candidates) {
   const raw = extractJson(text);
   const byId = new Map(candidates.map((c) => [c.areaId, c]));
@@ -121,7 +151,7 @@ export function parseSentinelOutput(text, candidates) {
 const NEW_CLIMATES_PER_RUN = 3;
 const CARRY_MS = 3 * 3600_000;
 // Part of the fingerprint: changing how briefings are written triggers one fresh briefing.
-const BRIEFING_VERSION = 2;
+const BRIEFING_VERSION = 5;
 
 export async function runSentinel({ store, weather, climate, agentLog, converse, models, deadline = Date.now() + 240_000, nowMs = () => Date.now(), retryPauseMs = 20_000 }) {
   const areas = buildAreas(await store.listAllLocations());
@@ -238,8 +268,8 @@ export async function runSentinel({ store, weather, climate, agentLog, converse,
   const signal = (c) => ({
     areaId: c.areaId, place: c.place, people: c.people, vulnerablePeople: c.vulnerable, outdoorWorkers: c.workers,
     evidenceCeiling: c.ceiling, previousLevel: prevLevels.get(c.place) ?? null,
-    excessHeatFactor: c.ehf.climatePending ? 'not available yet (local climatology still being computed)' : c.ehf.days.map((d) => ({ date: d.date, ehf: d.ehf, severity: d.severity })),
-    heatIndexByDay: c.hiDays, tmaxTrendCPerDay: c.tmaxTrendCPerDay, tropicalNightsAhead: c.tropicalNights,
+    excessHeatFactor: c.ehf.climatePending ? 'not available yet (local climatology still being computed)' : c.ehf.days.map((d) => ({ date: d.date, day: weekday(d.date), ehf: d.ehf, severity: d.severity })),
+    heatIndexByDay: c.hiDays.map((d) => ({ ...d, day: weekday(d.date) })), tmaxTrendCPerDay: c.tmaxTrendCPerDay, tropicalNightsAhead: c.tropicalNights,
   });
   let plainWordsAsked = false;
   const run = await runAgent({
@@ -248,7 +278,7 @@ export async function runSentinel({ store, weather, climate, agentLog, converse,
       models,
       maxTurns: 5,
       maxTokens: 1500,
-      system: 'You are Sol, HeatShield\'s heat sentinel: an operational heat-health forecaster. You read algorithmic heat signals (Excess Heat Factor against local 1991-2020 climate, US National Weather Service heat-index tiers, temperature trend, tropical nights) and decide which areas need a heat watch, warning or emergency, whether each is new, escalating, steady or easing compared with your previous briefing, and you write a short situation briefing for community health workers. Use the tools. Never exceed an area\'s evidenceCeiling. Write for non-specialists: plain words, no jargon or acronyms (say "unusually hot for this place and time of year" instead of "positive EHF", and "dangerous heat and humidity" instead of "danger-tier heat index"). Be factual and calm; name places and weekdays or dates.',
+      system: 'You are Sol, HeatShield\'s heat sentinel: an operational heat-health forecaster. You read algorithmic heat signals (Excess Heat Factor against local 1991-2020 climate, US National Weather Service heat-index tiers, temperature trend, tropical nights) and decide which areas need a heat watch, warning or emergency, whether each is new, escalating, steady or easing compared with your previous briefing, and you write a short situation briefing for community health workers. Use the tools. Never exceed an area\'s evidenceCeiling. Write for community health workers, not meteorologists: everyday full sentences about what people will face and when, for example "Dhaka is hotter than usual for this time of year until Thursday." or "Dubai has dangerous heat and humidity every afternoon this week." Never name an index or use acronyms, and never mention that a measure is absent or low. Be factual and calm; name places and weekdays or dates.',
       tools: [
         { name: 'list_heat_signals', description: 'All watched areas with a heat signal, with the algorithm\'s evidence.', inputSchema: { type: 'object', properties: {} }, handler: async () => ({ areas: candidates.map(signal) }) },
         {
@@ -263,23 +293,24 @@ export async function runSentinel({ store, weather, climate, agentLog, converse,
         },
         {
           name: 'get_previous_briefing',
-          description: 'Your previous briefing and events, to judge what is new, escalating or easing.',
+          description: 'Which places you reported last time and at what level, to see which areas are no longer at risk.',
           inputSchema: { type: 'object', properties: {} },
-          handler: async () => (prev ? { generatedAt: prev.updatedAt, briefing: prev.briefing, events: (prev.events ?? []).map(({ place, level, headline }) => ({ place, level, headline })) } : { none: true }),
+          // Levels only, no prose: given its old text, the model copied the old phrasing, mistakes included.
+          handler: async () => (prev ? { reportedAt: prev.briefedAt ?? prev.updatedAt, events: (prev.events ?? []).map(({ place, level }) => ({ place, level })) } : { none: true }),
         },
       ],
     },
-    input: `It is ${new Date(nowMs()).toISOString()}. ${candidates.length} of ${assessed.length} watched areas show a heat signal. Each area's previousLevel is what you called it in your previous briefing (null: it was not in it), so do not call an area new if it had one. Investigate with your tools, then reply with ONLY this JSON:\n{"briefing":"3-5 plain-language sentences","events":[{"areaId":"A1","level":"watch|warning|emergency","trend":"new|escalating|steady|easing","headline":"one plain-language line","reason":"cite the evidence (EHF, tiers, dates)"}]}`,
+    input: `It is ${new Date(nowMs()).toISOString()}. ${candidates.length} of ${assessed.length} watched areas show a heat signal. Each area's previousLevel is what you called it in your previous briefing (null: it was not in it), so do not call an area new if it had one. Name a day for dangerous heat only if that day's heatIndexByDay tier is danger or extreme_danger. Investigate with your tools, then reply with ONLY this JSON:\n{"briefing":"3-5 plain-language sentences","events":[{"areaId":"A1","level":"watch|warning|emergency","reason":"cite the evidence (EHF, tiers, dates)"}]}`,
     converse,
     deadline,
     repairs: 2,
     validate: (text) => {
       const out = parseSentinelOutput(text, candidates);
-      const jargon = findJargon([out.briefing, ...out.events.map((e) => e.headline)].join(' '));
+      const jargon = findJargon(out.briefing);
       if (jargon.length && !plainWordsAsked) {
         // One rewrite for plain words; after that, the facts matter more than the wording.
         plainWordsAsked = true;
-        throw new Error(`the briefing and headlines are for non-specialists but use jargon (${jargon.join(', ')}). Say "unusually hot for this place and time of year" instead of excess heat factor, and "dangerous heat and humidity" instead of a danger-tier heat index`);
+        throw new Error(`the briefing is for community health workers but uses technical terms (${jargon.join(', ')}). Rewrite it as everyday sentences about what people will face and when, like "Dhaka is hotter than usual for this time of year until Thursday." Do not name any index and do not mention measures that are absent`);
       }
       return out;
     },
@@ -290,7 +321,7 @@ export async function runSentinel({ store, weather, climate, agentLog, converse,
   const enriched = [
     ...events.map((e) => {
       const a = candidates.find((c) => c.areaId === e.areaId);
-      return { ...e, trend: trendOf(a.place, e.level), place: a.place, lat: a.lat, lon: a.lon, people: a.people, ehfWorst: a.ehf.worst, ceiling: a.ceiling };
+      return { ...e, trend: trendOf(a.place, e.level), headline: headlineFor(a), place: a.place, lat: a.lat, lon: a.lon, people: a.people, ehfWorst: a.ehf.worst, ceiling: a.ceiling };
     }),
     ...carriedEvents,
   ];
