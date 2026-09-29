@@ -16,6 +16,7 @@ import { runAlertCheck } from '../functions/lib/alert-runner.mjs';
 import { createEnrollmentApi } from '../functions/lib/enrollment-routes.mjs';
 import { createStore } from '../functions/lib/store.mjs';
 import { assessRisk } from '../functions/lib/heat.mjs';
+import { createWeatherClient, UpstreamError } from '../functions/lib/weather.mjs';
 import { createFakeDb, makeForecast, diurnal, silentLog, apiEvent, parse } from './helpers.mjs';
 
 const text = (t) => ({ stopReason: 'end_turn', output: { message: { role: 'assistant', content: [{ text: t }] } }, usage: { inputTokens: 10, outputTokens: 5 } });
@@ -127,6 +128,147 @@ test('Sol first runs: an area whose climatology is not downloaded yet is judged 
   const state = await agentLog.getState('sol', 'latest');
   assert.equal(state.areas[0].climatePending, true);
   assert.equal(state.events[0].level, 'warning');
+});
+
+test('Sol 10:05 UTC: an unchanged briefing is still rewritten after 6 hours (each re-check used to reset its age)', async () => {
+  const { db, tables } = createFakeDb();
+  const store = createStore({ db, tables });
+  let now = Date.parse('2026-09-29T04:05:00Z');
+  const nowMs = () => now;
+  const agentLog = createAgentLog({ db, table: tables.agentLog, nowMs });
+  await db.put({ table: 'locations', item: { locationId: 'l1', lat: 25.2, lon: 55.27, placeName: 'Dubai', profile: 'outdoor_worker' } });
+  const dates = Array.from({ length: 38 }, (_, i) => new Date(Date.UTC(2026, 8, 1 + i)).toISOString().slice(0, 10));
+  const weather = {
+    getForecast: async () => hot(),
+    getDaily: async () => ({ dates, today: dates[31], tmax: Array(38).fill(38), tmin: Array(38).fill(29) }),
+  };
+  let calls = 0;
+  const converse = async () => {
+    calls += 1;
+    return text(JSON.stringify({ briefing: `Briefing ${calls}.`, events: [{ areaId: 'A1', level: 'warning', trend: 'steady', headline: 'Dubai' }] }));
+  };
+  const run = () => runSentinel({ store, weather, climate: { get: async () => null }, agentLog, converse, models: ['m'], nowMs });
+  assert.equal((await run()).outcome, 'briefed');
+  let last;
+  for (let hour = 1; hour <= 5; hour += 1) {
+    now += 3600_000;
+    last = await run();
+    assert.equal(last.outcome, 'unchanged');
+  }
+  assert.match(last.summary, /unchanged since the 04:05 UTC briefing/);
+  now += 3600_000;
+  assert.equal((await run()).outcome, 'briefed', 'six hours after the briefing, Sol writes a fresh one');
+  assert.equal(calls, 2);
+  assert.equal((await agentLog.getState('sol', 'latest')).briefedAt, '2026-09-29T10:05:00.000Z');
+});
+
+test('Mira 02:00 UTC: activity lines read "an English plan", not "a English plan"', async () => {
+  const { db, tables } = createFakeDb();
+  const agentLog = createAgentLog({ db, table: tables.agentLog });
+  const svc = createGuidanceService({ converse: async () => text(JSON.stringify(GOOD)), cache: memCache(), models: ['w'], log: silentLog, agentLog });
+  await svc.getGuidance(assessRisk(hot(), 'general'), 'en');
+  await svc.getGuidance(assessRisk(hot(), 'general'), 'es');
+  const summaries = (await agentLog.listRuns('mira')).map((r) => r.summary);
+  assert.ok(summaries.some((x) => x.startsWith('Wrote an English plan')), summaries.join(' | '));
+  assert.ok(summaries.some((x) => x.startsWith('Wrote a Spanish plan')), summaries.join(' | '));
+});
+
+test('Sol 11:05 UTC: Open-Meteo answered 429 for 2 of 10 areas; the weather client now retries a 429 once, but not a 400', async () => {
+  const replies = [{ ok: false, status: 429 }, { ok: true, status: 200, json: async () => ({ daily: { time: ['2026-09-29'], temperature_2m_max: [40], temperature_2m_min: [30] } }) }];
+  const calls = [];
+  const weather = createWeatherClient({ fetchImpl: async (url) => { calls.push(url); return replies.shift(); }, retryDelayMs: 0 });
+  const daily = await weather.getDaily(25.2, 55.27);
+  assert.equal(calls.length, 2);
+  assert.deepEqual(daily.tmax, [40]);
+
+  let badCalls = 0;
+  const strict = createWeatherClient({ fetchImpl: async () => { badCalls += 1; return { ok: false, status: 400 }; }, retryDelayMs: 0 });
+  await assert.rejects(strict.getDaily(1, 1), /HTTP 400/);
+  assert.equal(badCalls, 1, 'a bad request is not retried');
+});
+
+function refusalWorld() {
+  const { db, tables } = createFakeDb();
+  const store = createStore({ db, tables });
+  let now = Date.parse('2026-09-29T10:05:00Z');
+  const clock = { nowMs: () => now, advance: (ms) => { now += ms; } };
+  const agentLog = createAgentLog({ db, table: tables.agentLog, nowMs: clock.nowMs });
+  const dates = Array.from({ length: 38 }, (_, i) => new Date(Date.UTC(2026, 8, 1 + i)).toISOString().slice(0, 10));
+  const refused = new Set();
+  const refuse = (lat) => { if (refused.has(lat)) throw new UpstreamError('Open-Meteo HTTP 429', { status: 429 }); };
+  const weather = {
+    getForecast: async (lat) => { refuse(lat); return lat > 20 ? hot() : makeForecast({ nowHour: 9, temp: diurnal(15, 24), rh: () => 50 }); },
+    getDaily: async (lat) => { refuse(lat); return { dates, today: dates[31], tmax: Array(38).fill(lat > 20 ? 38 : 24), tmin: Array(38).fill(lat > 20 ? 29 : 14) }; },
+  };
+  return { db, store, agentLog, weather, clock, refused };
+}
+
+test('Sol 11:05 UTC: an area refused twice keeps its last good data (marked stale) and its heat event stays', async () => {
+  const w = refusalWorld();
+  await w.db.put({ table: 'locations', item: { locationId: 'l1', lat: 23.81, lon: 90.41, placeName: 'Dhaka, Bangladesh', profile: 'elderly' } });
+  await w.db.put({ table: 'locations', item: { locationId: 'l2', lat: 14.6, lon: 120.98, placeName: 'Manila, Philippines', profile: 'child' } });
+  let modelCalls = 0;
+  const converse = async () => {
+    modelCalls += 1;
+    return text(JSON.stringify({ briefing: 'Dangerous heat and humidity in Dhaka.', events: [{ areaId: 'A1', level: 'warning', trend: 'new', headline: 'Dhaka' }] }));
+  };
+  const run = () => runSentinel({ store: w.store, weather: w.weather, climate: { get: async () => null }, agentLog: w.agentLog, converse, models: ['m'], nowMs: w.clock.nowMs, retryPauseMs: 0 });
+  assert.equal((await run()).outcome, 'briefed');
+
+  // Next hour Open-Meteo refuses Dhaka (the area with the heat event) on both tries.
+  w.clock.advance(3600_000);
+  w.refused.add(23.81);
+  const r = await run();
+  assert.equal(r.outcome, 'partial', 'the heat event stays; no model call is needed to say so');
+  assert.match(r.summary, /Scanned 1 areas \(1 more kept from earlier data\)/);
+  assert.equal(modelCalls, 1);
+  const state = await w.agentLog.getState('sol', 'latest');
+  assert.equal(state.areas.length, 2, 'the board keeps both areas');
+  const dhaka = state.areas.find((a) => a.place === 'Dhaka, Bangladesh');
+  assert.equal(dhaka.stale, true);
+  assert.equal(dhaka.asOf, '2026-09-29T10:05:00.000Z');
+  assert.equal(state.events[0].place, 'Dhaka, Bangladesh');
+  assert.equal(state.events[0].stale, true);
+  assert.equal(state.failures[0].message, 'Open-Meteo HTTP 429');
+  assert.match(state.briefing, /forecast for Dhaka could not be refreshed/);
+  w.clock.advance(3600_000);
+  assert.equal((await run()).outcome, 'unchanged', 'still refused next hour: no new briefing, no flapping');
+
+  // Fresh data again: Sol writes a new briefing, so the "could not be refreshed" text goes away.
+  w.clock.advance(3600_000);
+  w.refused.delete(23.81);
+  assert.equal((await run()).outcome, 'briefed');
+  assert.equal(modelCalls, 2);
+  const fresh = await w.agentLog.getState('sol', 'latest');
+  assert.equal(fresh.events[0].stale, undefined);
+  assert.ok(!fresh.areas.some((x) => x.stale));
+  assert.doesNotMatch(fresh.briefing, /could not be refreshed/);
+  w.refused.add(23.81);
+
+  // After 3 hours without fresh data, the area is no longer shown as if we knew.
+  w.clock.advance(3 * 3600_000);
+  await run();
+  const later = await w.agentLog.getState('sol', 'latest');
+  assert.ok(!later.areas.some((a) => a.place === 'Dhaka, Bangladesh'));
+  assert.ok(!later.events.some((e) => e.place === 'Dhaka, Bangladesh'));
+});
+
+test('Sol: an area refused once is retried after a pause and counts as fresh', async () => {
+  const w = refusalWorld();
+  await w.db.put({ table: 'locations', item: { locationId: 'l1', lat: 14.6, lon: 120.98, placeName: 'Manila, Philippines', profile: 'child' } });
+  let refusals = 0;
+  const weather = {
+    ...w.weather,
+    getDaily: async (lat) => {
+      if (refusals === 0) { refusals += 1; throw new UpstreamError('Open-Meteo HTTP 429', { status: 429 }); }
+      return w.weather.getDaily(lat);
+    },
+  };
+  const r = await runSentinel({ store: w.store, weather, climate: { get: async () => null }, agentLog: w.agentLog, converse: async () => { throw new Error('quiet: no model call'); }, models: ['m'], nowMs: w.clock.nowMs, retryPauseMs: 0 });
+  assert.equal(r.outcome, 'quiet');
+  const state = await w.agentLog.getState('sol', 'latest');
+  assert.deepEqual(state.failures, []);
+  assert.equal(state.areas[0].stale, undefined);
 });
 
 test('Kai: empty groups (left by end-to-end tests) are skipped, not counted as planned', async () => {

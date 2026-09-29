@@ -250,7 +250,7 @@ export function createGuidanceService({
           model: modelId,
           inputTokens: res.usage?.inputTokens ?? 0,
           outputTokens: res.usage?.outputTokens ?? 0,
-          summary: `${feedback ? 'Revised' : 'Wrote'} a ${LANGUAGES[input.language].name} plan for ${PROFILE_DESCRIPTIONS[input.profileId].split(' (')[0]} (${TIER_LABELS[input.next12hTier]}).`,
+          summary: `${feedback ? 'Revised' : 'Wrote'} ${/^[AEIOU]/.test(LANGUAGES[input.language].name) ? 'an' : 'a'} ${LANGUAGES[input.language].name} plan for ${PROFILE_DESCRIPTIONS[input.profileId].split(' (')[0]} (${TIER_LABELS[input.next12hTier]}).`,
           detail: { language: input.language, profile: input.profileId, factsUsed: facts.map((f) => f.id), headline: guidance.headline },
         });
         return { guidance, model: modelId };

@@ -23,14 +23,17 @@ export class UpstreamError extends Error {
   }
 }
 
-async function getJson(url, fetchImpl, attempts = 2) {
+async function getJson(url, fetchImpl, retryDelayMs, attempts = 2) {
   let lastErr;
   for (let i = 0; i < attempts; i += 1) {
+    // Open-Meteo limits requests per IP, and Lambda shares outbound IPs with other AWS customers,
+    // so a 429 is often someone else's burst: wait briefly before the second try.
+    if (lastErr?.status === 429 && retryDelayMs) await new Promise((r) => setTimeout(r, retryDelayMs));
     try {
       const res = await fetchImpl(url, { signal: AbortSignal.timeout(TIMEOUT_MS) });
       if (res.ok) return await res.json();
       lastErr = new UpstreamError(`Open-Meteo HTTP ${res.status}`, { status: res.status });
-      if (res.status < 500) break; // client error: retrying will not help
+      if (res.status < 500 && res.status !== 429) break; // a bad request: retrying will not help
     } catch (err) {
       lastErr = new UpstreamError(`Open-Meteo request failed: ${err.message}`, { cause: err });
     }
@@ -75,7 +78,7 @@ export function normalizeForecast(json) {
   };
 }
 
-export function createWeatherClient({ fetchImpl = globalThis.fetch, now = () => Date.now() } = {}) {
+export function createWeatherClient({ fetchImpl = globalThis.fetch, now = () => Date.now(), retryDelayMs = 1200 } = {}) {
   const cache = new Map();
 
   async function getForecast(lat, lon) {
@@ -92,7 +95,7 @@ export function createWeatherClient({ fetchImpl = globalThis.fetch, now = () => 
       forecast_days: '4',
       timezone: 'auto',
     });
-    const value = normalizeForecast(await getJson(`${FORECAST_URL}?${params}`, fetchImpl));
+    const value = normalizeForecast(await getJson(`${FORECAST_URL}?${params}`, fetchImpl, retryDelayMs));
 
     if (cache.size >= CACHE_MAX) cache.delete(cache.keys().next().value);
     cache.set(key, { at: now(), value });
@@ -115,7 +118,7 @@ export function createWeatherClient({ fetchImpl = globalThis.fetch, now = () => 
       forecast_days: '7',
       timezone: 'auto',
     });
-    const json = await getJson(`${FORECAST_URL}?${params}`, fetchImpl);
+    const json = await getJson(`${FORECAST_URL}?${params}`, fetchImpl, retryDelayMs);
     if (!Array.isArray(json?.daily?.time)) throw new UpstreamError('Unexpected daily payload');
     const today = new Date(now() + (json.utc_offset_seconds ?? 0) * 1000).toISOString().slice(0, 10);
     const value = {
@@ -132,7 +135,7 @@ export function createWeatherClient({ fetchImpl = globalThis.fetch, now = () => 
 
   async function geocode(query, language = 'en') {
     const params = new URLSearchParams({ name: query, count: '6', language, format: 'json' });
-    const json = await getJson(`${GEOCODE_URL}?${params}`, fetchImpl);
+    const json = await getJson(`${GEOCODE_URL}?${params}`, fetchImpl, retryDelayMs);
     return (json.results ?? []).map((r) => ({
       name: r.name,
       admin1: r.admin1 ?? null,

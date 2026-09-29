@@ -115,8 +115,9 @@ export function parseSentinelOutput(text, candidates) {
 }
 
 const NEW_CLIMATES_PER_RUN = 3;
+const CARRY_MS = 3 * 3600_000;
 
-export async function runSentinel({ store, weather, climate, agentLog, converse, models, deadline = Date.now() + 240_000, nowMs = () => Date.now() }) {
+export async function runSentinel({ store, weather, climate, agentLog, converse, models, deadline = Date.now() + 240_000, nowMs = () => Date.now(), retryPauseMs = 20_000 }) {
   const areas = buildAreas(await store.listAllLocations());
   const failures = [];
 
@@ -135,55 +136,90 @@ export async function runSentinel({ store, weather, climate, agentLog, converse,
     }
   }
 
-  await mapLimit(areas, 4, async (area) => {
-    try {
-      const [daily, forecast] = await Promise.all([
-        weather.getDaily(area.lat, area.lon),
-        weather.getForecast(area.lat, area.lon),
-      ]);
-      const clim = area.clim;
-      // No climatology yet (budget or download failure): judge on heat index alone this hour.
-      area.ehf = clim
-        ? assessEhf({ dates: daily.dates, tmax: daily.tmax, tmin: daily.tmin, today: daily.today, climate: clim })
-        : { days: [], worst: null, heatwave: false, climatePending: true };
-      area.climate = clim ? { t95: round1(clim.t95), ehf85: round1(clim.ehf85), period: clim.period } : null;
-      area.hiDays = assessRisk(forecast, 'general').outlook.map((d) => ({ date: d.date, tier: d.tier, maxHeatIndexC: d.maxHeatIndexC }));
-      const future = daily.dates.map((d, i) => [d, daily.tmax[i]]).filter(([d]) => d >= daily.today);
-      area.tmaxTrendCPerDay = round1(linearRegression(future.map((_, i) => i), future.map(([, t]) => t)).slope);
-      area.tropicalNights = daily.dates.filter((d, i) => d >= daily.today && daily.tmin[i] > 20).length;
-      area.ceiling = evidenceCeiling(area);
-    } catch (err) {
-      failures.push({ areaId: area.areaId, place: area.place, stage: 'forecast', message: err.message });
-      area.error = err.message;
-    }
-  });
+  const assessArea = async (area) => {
+    const [daily, forecast] = await Promise.all([
+      weather.getDaily(area.lat, area.lon),
+      weather.getForecast(area.lat, area.lon),
+    ]);
+    const clim = area.clim;
+    // No climatology yet (budget or download failure): judge on heat index alone this hour.
+    area.ehf = clim
+      ? assessEhf({ dates: daily.dates, tmax: daily.tmax, tmin: daily.tmin, today: daily.today, climate: clim })
+      : { days: [], worst: null, heatwave: false, climatePending: true };
+    area.climate = clim ? { t95: round1(clim.t95), ehf85: round1(clim.ehf85), period: clim.period } : null;
+    area.hiDays = assessRisk(forecast, 'general').outlook.map((d) => ({ date: d.date, tier: d.tier, maxHeatIndexC: d.maxHeatIndexC }));
+    const future = daily.dates.map((d, i) => [d, daily.tmax[i]]).filter(([d]) => d >= daily.today);
+    area.tmaxTrendCPerDay = round1(linearRegression(future.map((_, i) => i), future.map(([, t]) => t)).slope);
+    area.tropicalNights = daily.dates.filter((d, i) => d >= daily.today && daily.tmin[i] > 20).length;
+    area.ceiling = evidenceCeiling(area);
+  };
+  const attempt = (area) => assessArea(area).then(() => { delete area.error; }, (err) => { area.error = err.message; });
+  await mapLimit(areas, 4, attempt);
+  // Open-Meteo limits requests per IP and Lambda shares outbound IPs with other AWS customers, so an
+  // area can be refused for reasons that have nothing to do with us: one more try after a pause.
+  const refused = areas.filter((a) => a.error);
+  if (refused.length && deadline - Date.now() > retryPauseMs + 60_000) {
+    await new Promise((r) => setTimeout(r, retryPauseMs));
+    for (const area of refused) await attempt(area);
+  }
+  for (const a of areas) if (a.error) failures.push({ areaId: a.areaId, place: a.place, stage: 'forecast', message: a.error });
 
+  const nowIso = new Date(nowMs()).toISOString();
+  const prev = await agentLog.getState('sol', 'latest');
   const assessed = areas.filter((a) => !a.error);
   const candidates = assessed.filter((a) => a.ceiling);
-  const areaSummary = assessed.map((a) => ({
-    areaId: a.areaId, place: a.place, people: a.people, ceiling: a.ceiling, climatePending: Boolean(a.ehf.climatePending),
-    lat: Math.round(a.lat * 10) / 10, lon: Math.round(a.lon * 10) / 10, // city-level, for the situation board
-    ehfWorst: a.ehf.worst ? { date: a.ehf.worst.date, ehf: a.ehf.worst.ehf, severity: a.ehf.worst.severity } : null,
-    worstTier: a.hiDays.reduce((w, d) => (tierRank(d.tier) > tierRank(w) ? d.tier : w), 'lower'),
-  }));
-  const base = { areasScanned: assessed.length, failures, areas: areaSummary };
+  // An area that still could not be refreshed keeps its last good data (up to 3 hours, marked stale),
+  // so a rate limit never silently drops a heat event or makes the board flicker.
+  const carried = areas.filter((a) => a.error).flatMap((a) => {
+    const last = (prev?.areas ?? []).find((p) => p.place === a.place);
+    const asOf = last?.asOf ?? prev?.updatedAt;
+    return last && nowMs() - Date.parse(asOf) < CARRY_MS ? [{ ...last, areaId: a.areaId, stale: true, asOf }] : [];
+  });
+  const carriedEvents = (prev?.events ?? [])
+    .filter((e) => carried.some((c) => c.ceiling && c.place === e.place))
+    .map((e) => ({ ...e, stale: true }));
+  const areaSummary = [
+    ...assessed.map((a) => ({
+      areaId: a.areaId, place: a.place, people: a.people, ceiling: a.ceiling, climatePending: Boolean(a.ehf.climatePending),
+      lat: Math.round(a.lat * 10) / 10, lon: Math.round(a.lon * 10) / 10, // city-level, for the situation board
+      ehfWorst: a.ehf.worst ? { date: a.ehf.worst.date, ehf: a.ehf.worst.ehf, severity: a.ehf.worst.severity } : null,
+      worstTier: a.hiDays.reduce((w, d) => (tierRank(d.tier) > tierRank(w) ? d.tier : w), 'lower'),
+      asOf: nowIso,
+    })),
+    ...carried,
+  ];
+  const base = { areasScanned: assessed.length, areasCarried: carried.length, failures, areas: areaSummary };
+  const scanned = `Scanned ${assessed.length} areas${carried.length ? ` (${carried.length} more kept from earlier data)` : ''}`;
+  const staleNote = carriedEvents.length
+    ? `The forecast for ${carriedEvents.map((e) => e.place.split(',')[0]).join(', ')} could not be refreshed this hour, so the earlier heat event(s) there stay in place until they can be checked again.`
+    : '';
 
-  if (candidates.length === 0) {
-    const state = { ...base, briefing: `No heatwave or dangerous heat in the ${assessed.length} watched areas over the next days.`, events: [], fingerprint: 'quiet', model: null };
+  if (candidates.length === 0 && carriedEvents.length === 0) {
+    const state = { ...base, briefing: `No heatwave or dangerous heat in the ${assessed.length} watched areas over the next days.`, events: [], fingerprint: 'quiet', model: null, briefedAt: nowIso };
     await agentLog.putState('sol', 'latest', state);
-    return { outcome: 'quiet', summary: `Scanned ${assessed.length} areas: all quiet.`, detail: { events: [] } };
+    return { outcome: 'quiet', summary: `${scanned}: all quiet.`, detail: { events: [] } };
   }
 
-  const fingerprint = createHash('sha1').update(JSON.stringify(candidates.map((c) => [c.areaId, c.place, c.ceiling, c.ehf.worst?.date]))).digest('hex').slice(0, 12);
-  const prev = await agentLog.getState('sol', 'latest');
-  const prevAge = prev?.updatedAt ? nowMs() - Date.parse(prev.updatedAt) : Infinity;
+  // What would change the briefing: which areas are at which ceiling, their worst EHF day, and
+  // whether that comes from this hour's data or from earlier data (so the text never goes stale).
+  const fingerprint = createHash('sha1')
+    .update(JSON.stringify(areaSummary.filter((a) => a.ceiling).map((a) => [a.place, a.ceiling, a.ehfWorst?.date ?? null, a.ehfWorst?.severity ?? null, Boolean(a.stale)]).sort()))
+    .digest('hex').slice(0, 12);
+  // Age of the briefing itself: updatedAt moves on every re-check, so it could never expire one.
+  const prevAge = prev?.briefedAt ? nowMs() - Date.parse(prev.briefedAt) : Infinity;
   if (prev?.fingerprint === fingerprint && prevAge < 6 * 3600_000 && prev.events?.length) {
     await agentLog.putState('sol', 'latest', { ...prev, ...base, events: prev.events, briefing: prev.briefing, fingerprint });
     return {
       outcome: 'unchanged',
-      summary: `Scanned ${assessed.length} areas: ${prev.events.length} heat event(s) unchanged since the last briefing.`,
+      summary: `${scanned}: ${prev.events.length} heat event(s) unchanged since the ${prev.briefedAt.slice(11, 16)} UTC briefing.`,
       detail: { events: prev.events.map(({ place, level, trend }) => ({ place, level, trend })) },
     };
+  }
+  if (candidates.length === 0) {
+    // Only areas we could not refresh still show heat: keep their events as they were, no model call.
+    const briefing = `No heat signals in the ${assessed.length} areas refreshed this hour. ${staleNote}`;
+    await agentLog.putState('sol', 'latest', { ...base, briefing, events: carriedEvents, fingerprint, model: null, briefedAt: nowIso });
+    return { outcome: 'partial', summary: `${scanned}: no new heat signals; kept ${carriedEvents.length} earlier event(s).`, detail: { events: carriedEvents.map(({ place, level, trend }) => ({ place, level, trend })) } };
   }
 
   const signal = (c) => ({
@@ -225,17 +261,21 @@ export async function runSentinel({ store, weather, climate, agentLog, converse,
     validate: (text) => parseSentinelOutput(text, candidates),
   });
 
-  const { briefing, events } = run.value;
-  const enriched = events.map((e) => {
-    const a = candidates.find((c) => c.areaId === e.areaId);
-    return { ...e, place: a.place, lat: a.lat, lon: a.lon, people: a.people, ehfWorst: a.ehf.worst, ceiling: a.ceiling };
-  });
-  await agentLog.putState('sol', 'latest', { ...base, briefing, events: enriched, fingerprint, model: run.model });
+  const { events } = run.value;
+  const briefing = [run.value.briefing, staleNote].filter(Boolean).join(' ');
+  const enriched = [
+    ...events.map((e) => {
+      const a = candidates.find((c) => c.areaId === e.areaId);
+      return { ...e, place: a.place, lat: a.lat, lon: a.lon, people: a.people, ehfWorst: a.ehf.worst, ceiling: a.ceiling };
+    }),
+    ...carriedEvents,
+  ];
+  await agentLog.putState('sol', 'latest', { ...base, briefing, events: enriched, fingerprint, model: run.model, briefedAt: nowIso });
   const emergencies = enriched.filter((e) => e.level === 'emergency').length;
   return {
     ...run,
     outcome: 'briefed',
-    summary: `Scanned ${assessed.length} areas: ${enriched.length} heat event(s)${emergencies ? `, ${emergencies} emergency` : ''}. ${briefing.slice(0, 160)}`,
+    summary: `${scanned}: ${enriched.length} heat event(s)${emergencies ? `, ${emergencies} emergency` : ''}. ${briefing.slice(0, 160)}`,
     detail: { events: enriched.map(({ place, level, trend, headline }) => ({ place, level, trend, headline })) },
   };
 }
