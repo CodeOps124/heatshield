@@ -1,6 +1,6 @@
 // Invite page: join a leader's group.
 import { api } from './api.js';
-import { notice, initThemeToggle, showVersion, hashParams } from './ui.js';
+import { notice, initThemeToggle, showVersion, hashParams, showSiteNotice } from './ui.js';
 import { createPlaceSearch } from './place-search.js';
 import { createRegisterForm } from './register-form.js';
 
@@ -10,6 +10,7 @@ let place = null;
 
 async function boot() {
   initThemeToggle($('theme-toggle'));
+  showSiteNotice();
   showVersion($('version'));
   if (!groupId) {
     $('group-name').textContent = 'Invite link needed';

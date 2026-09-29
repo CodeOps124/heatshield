@@ -42,6 +42,13 @@ Parameters:
     Type: String
     AllowedValues: [ENABLED, DISABLED]
     Default: ENABLED
+  SiteDomain:
+    Type: String
+    Default: ''
+    Description: >-
+      The CloudFront domain of this stack (set automatically by scripts/deploy.mjs after the first
+      deploy). Passed in rather than referenced so the admin sign-in and the agents can use it
+      without a CloudFormation dependency cycle.
 
 Conditions:
   HasFallbackModel: !Not [!Equals [!Ref BedrockFallbackModelId, '']]
@@ -113,7 +120,14 @@ Resources:
   OpsTopic:
     Type: AWS::SNS::Topic
     Properties:
-      DisplayName: HeatShield Ops # Otto's incident reports; subscribe an on-call email to receive them
+      DisplayName: HeatShield Ops # Otto's incident reports and the CloudWatch alarms; subscribe an on-call email
+
+  # Scheduled runs that fail twice (one retry) land here; Otto reports the count, the admin console lists them.
+  FailedRunsQueue:
+    Type: AWS::SQS::Queue
+    Properties:
+      MessageRetentionPeriod: 1209600 # 14 days
+      SqsManagedSseEnabled: true
 
   # ------------------------------------------------------------------ data
   GroupsTable:
@@ -218,6 +232,7 @@ Resources:
         - LambdaInvokePolicy: { FunctionName: !Ref WatchdogFunction } # visitor "ask Otto to check"
       Events:
         Agents: { Type: HttpApi, Properties: { ApiId: !Ref HttpApi, Method: GET, Path: /api/agents } }
+        Notice: { Type: HttpApi, Properties: { ApiId: !Ref HttpApi, Method: GET, Path: /api/notice } }
         RunAgent: { Type: HttpApi, Properties: { ApiId: !Ref HttpApi, Method: POST, Path: '/api/agents/{agentId}/run' } }
         Health: { Type: HttpApi, Properties: { ApiId: !Ref HttpApi, Method: GET, Path: /api/health } }
         Geocode: { Type: HttpApi, Properties: { ApiId: !Ref HttpApi, Method: GET, Path: /api/geocode } }
@@ -268,6 +283,10 @@ Resources:
       Description: Hourly - recompute risk for every registered location and send SNS alerts on threshold crossing
       Handler: handlers/alert-check.handler
       Timeout: 300
+      EventInvokeConfig: # retry once, then the dead-letter queue
+        MaximumRetryAttempts: 1
+        DestinationConfig:
+          OnFailure: { Type: SQS, Destination: !GetAtt FailedRunsQueue.Arn }
       Environment:
         Variables:
           SITE_URL: !Sub https://${Distribution.DomainName}
@@ -278,6 +297,7 @@ Resources:
         - DynamoDBCrudPolicy: { TableName: !Ref AgentLogTable }
         - SNSPublishMessagePolicy: { TopicName: !GetAtt AlertsTopic.TopicName }
         - !Ref BedrockInvokePolicy
+        - SQSSendMessagePolicy: { QueueName: !GetAtt FailedRunsQueue.QueueName }
       Events:
         Hourly:
           Type: ScheduleV2
@@ -310,10 +330,15 @@ Resources:
       Description: Sol - Heat Sentinel agent. Excess Heat Factor vs local climate, heat watches and briefing
       Handler: handlers/agents.sentinel
       Timeout: 300
+      EventInvokeConfig: # retry once, then the dead-letter queue
+        MaximumRetryAttempts: 1
+        DestinationConfig:
+          OnFailure: { Type: SQS, Destination: !GetAtt FailedRunsQueue.Arn }
       Policies:
         - DynamoDBReadPolicy: { TableName: !Ref LocationsTable }
         - DynamoDBCrudPolicy: { TableName: !Ref AgentLogTable }
         - !Ref BedrockInvokePolicy
+        - SQSSendMessagePolicy: { QueueName: !GetAtt FailedRunsQueue.QueueName }
       Events:
         Hourly:
           Type: ScheduleV2
@@ -328,11 +353,16 @@ Resources:
       Description: Kai - Community Coordinator agent. Urgency scoring and EDF check-in plans for group leaders
       Handler: handlers/agents.coordinator
       Timeout: 120
+      EventInvokeConfig: # retry once, then the dead-letter queue
+        MaximumRetryAttempts: 1
+        DestinationConfig:
+          OnFailure: { Type: SQS, Destination: !GetAtt FailedRunsQueue.Arn }
       Policies:
         - DynamoDBReadPolicy: { TableName: !Ref GroupsTable }
         - DynamoDBReadPolicy: { TableName: !Ref LocationsTable }
         - DynamoDBCrudPolicy: { TableName: !Ref AgentLogTable }
         - !Ref BedrockInvokePolicy
+        - SQSSendMessagePolicy: { QueueName: !GetAtt FailedRunsQueue.QueueName }
       Events:
         ThreeHourly:
           Type: ScheduleV2
@@ -347,6 +377,10 @@ Resources:
       Description: Otto - Ops Watchdog agent. Probes the public URL, EWMA latency control charts, heartbeats, incidents
       Handler: handlers/agents.watchdog
       Timeout: 90
+      EventInvokeConfig: # retry once, then the dead-letter queue
+        MaximumRetryAttempts: 1
+        DestinationConfig:
+          OnFailure: { Type: SQS, Destination: !GetAtt FailedRunsQueue.Arn }
       # No references to the functions Otto watches (or to the distribution): the public API can
       # invoke Otto on demand, so a reference back would be a CloudFormation dependency cycle.
       # Log groups are discovered by the stack-name prefix; the site URL arrives in the schedule input.
@@ -354,10 +388,21 @@ Resources:
         Variables:
           OPS_TOPIC_ARN: !Ref OpsTopic
           STACK_NAME: !Ref AWS::StackName
+          FAILED_RUNS_QUEUE_URL: !Ref FailedRunsQueue
       Policies:
         - DynamoDBCrudPolicy: { TableName: !Ref AgentLogTable }
         - SNSPublishMessagePolicy: { TopicName: !GetAtt OpsTopic.TopicName }
         - !Ref BedrockInvokePolicy
+        - SQSSendMessagePolicy: { QueueName: !GetAtt FailedRunsQueue.QueueName }
+        - Statement:
+            - Sid: CountFailedRuns
+              Effect: Allow
+              Action: sqs:GetQueueAttributes
+              Resource: !GetAtt FailedRunsQueue.Arn
+            - Sid: RerunStalledAgents # self-healing; functions are matched by this stack's name prefix
+              Effect: Allow
+              Action: lambda:InvokeFunction
+              Resource: !Sub arn:${AWS::Partition}:lambda:${AWS::Region}:${AWS::AccountId}:function:${AWS::StackName}-*
         - Statement:
             - Sid: FindStackLogGroups
               Effect: Allow
@@ -391,6 +436,137 @@ Resources:
     Properties:
       LogGroupName: !Sub /aws/lambda/${WatchdogFunction}
       RetentionInDays: 14
+
+  # ------------------------------------------------------------------ alarms (email the ops topic)
+  # Inside the CloudWatch free tier (10 alarms). OK actions too, so a recovery is emailed as well.
+  PublicApiErrorsAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub ${AWS::StackName}-public-api-errors
+      AlarmDescription: 'The public API function crashed or timed out.'
+      Namespace: AWS/Lambda
+      MetricName: Errors
+      Dimensions: [{ Name: FunctionName, Value: !Ref PublicApiFunction }]
+      Statistic: Sum
+      Period: 300
+      EvaluationPeriods: 1
+      Threshold: 1
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      TreatMissingData: notBreaching
+      AlarmActions: [!Ref OpsTopic]
+      OKActions: [!Ref OpsTopic]
+  EnrollmentApiErrorsAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub ${AWS::StackName}-enrollment-api-errors
+      AlarmDescription: 'The enrollment API function crashed or timed out.'
+      Namespace: AWS/Lambda
+      MetricName: Errors
+      Dimensions: [{ Name: FunctionName, Value: !Ref EnrollmentApiFunction }]
+      Statistic: Sum
+      Period: 300
+      EvaluationPeriods: 1
+      Threshold: 1
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      TreatMissingData: notBreaching
+      AlarmActions: [!Ref OpsTopic]
+      OKActions: [!Ref OpsTopic]
+  DispatcherErrorsAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub ${AWS::StackName}-dispatcher-errors
+      AlarmDescription: 'The hourly alert Dispatcher crashed or timed out; heat alerts may not have gone out.'
+      Namespace: AWS/Lambda
+      MetricName: Errors
+      Dimensions: [{ Name: FunctionName, Value: !Ref AlertCheckFunction }]
+      Statistic: Sum
+      Period: 300
+      EvaluationPeriods: 1
+      Threshold: 1
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      TreatMissingData: notBreaching
+      AlarmActions: [!Ref OpsTopic]
+      OKActions: [!Ref OpsTopic]
+  ApiServerErrorsAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub ${AWS::StackName}-api-5xx
+      AlarmDescription: 'The HTTP API returned 10 or more server errors in 5 minutes.'
+      Namespace: AWS/ApiGateway
+      MetricName: 5xx
+      Dimensions: [{ Name: ApiId, Value: !Ref HttpApi }]
+      Statistic: Sum
+      Period: 300
+      EvaluationPeriods: 1
+      Threshold: 10
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      TreatMissingData: notBreaching
+      AlarmActions: [!Ref OpsTopic]
+      OKActions: [!Ref OpsTopic]
+  WatchdogSilentAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub ${AWS::StackName}-otto-silent
+      AlarmDescription: 'Otto, the watchdog, has not run for 30 minutes: nobody is watching the site.'
+      Namespace: AWS/Lambda
+      MetricName: Invocations
+      Dimensions: [{ Name: FunctionName, Value: !Ref WatchdogFunction }]
+      Statistic: Sum
+      Period: 1800
+      EvaluationPeriods: 1
+      Threshold: 1
+      ComparisonOperator: LessThanThreshold
+      TreatMissingData: breaching
+      AlarmActions: [!Ref OpsTopic]
+      OKActions: [!Ref OpsTopic]
+  DispatcherSilentAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub ${AWS::StackName}-dispatcher-silent
+      AlarmDescription: 'The hourly alert Dispatcher has not run for 2 hours: heat alerts are not being checked.'
+      Namespace: AWS/Lambda
+      MetricName: Invocations
+      Dimensions: [{ Name: FunctionName, Value: !Ref AlertCheckFunction }]
+      Statistic: Sum
+      Period: 3600
+      EvaluationPeriods: 2
+      DatapointsToAlarm: 2
+      Threshold: 1
+      ComparisonOperator: LessThanThreshold
+      TreatMissingData: breaching
+      AlarmActions: [!Ref OpsTopic]
+      OKActions: [!Ref OpsTopic]
+  FailedRunsAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub ${AWS::StackName}-failed-runs
+      AlarmDescription: 'A scheduled agent run failed twice and is waiting in the dead-letter queue.'
+      Namespace: AWS/SQS
+      MetricName: ApproximateNumberOfMessagesVisible
+      Dimensions: [{ Name: QueueName, Value: !GetAtt FailedRunsQueue.QueueName }]
+      Statistic: Maximum
+      Period: 300
+      EvaluationPeriods: 1
+      Threshold: 1
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      TreatMissingData: notBreaching
+      AlarmActions: [!Ref OpsTopic]
+      OKActions: [!Ref OpsTopic]
+  ThrottlesAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub ${AWS::StackName}-lambda-throttles
+      AlarmDescription: 'A Lambda function in this account was throttled (concurrency limit).'
+      Namespace: AWS/Lambda
+      MetricName: Throttles
+      Statistic: Sum
+      Period: 300
+      EvaluationPeriods: 1
+      Threshold: 1
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      TreatMissingData: notBreaching
+      AlarmActions: [!Ref OpsTopic]
+      OKActions: [!Ref OpsTopic]
 
   # ------------------------------------------------------------------ frontend
   SiteBucket:
@@ -517,3 +693,5 @@ Outputs:
     Value: !Ref AgentLogTable
   OpsTopicArn:
     Value: !Ref OpsTopic
+  FailedRunsQueueUrl:
+    Value: !Ref FailedRunsQueue

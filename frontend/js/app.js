@@ -2,7 +2,7 @@
 import { api, qs } from './api.js';
 import {
   el, clear, notice, initThemeToggle, showVersion, renderRiskSummary, renderGuidance, renderGuidanceLoading,
-  renderOutlook, linkBox, PROFILES, LANGUAGES,
+  renderOutlook, linkBox, PROFILES, LANGUAGES, showSiteNotice,
 } from './ui.js';
 import { renderHeatChart } from './chart.js';
 import { createPlaceSearch } from './place-search.js';
@@ -188,6 +188,7 @@ if (teaser && 'IntersectionObserver' in window) {
 
 // ---------------------------------------------------------------- boot
 initThemeToggle($('theme-toggle'));
+showSiteNotice();
 showVersion($('version'));
 fetch('/demo.json', { cache: 'no-store' })
   .then((r) => (r.ok ? r.json() : null))

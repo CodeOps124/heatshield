@@ -153,7 +153,7 @@ const CARRY_MS = 3 * 3600_000;
 // Part of the fingerprint: changing how briefings are written triggers one fresh briefing.
 const BRIEFING_VERSION = 5;
 
-export async function runSentinel({ store, weather, climate, agentLog, converse, models, deadline = Date.now() + 240_000, nowMs = () => Date.now(), retryPauseMs = 20_000 }) {
+export async function runSentinel({ store, weather, climate, agentLog, converse, models, deadline = Date.now() + 240_000, nowMs = () => Date.now(), retryPauseMs = 20_000, allowModel = true }) {
   const areas = buildAreas(await store.listAllLocations());
   const failures = [];
 
@@ -243,7 +243,8 @@ export async function runSentinel({ store, weather, climate, agentLog, converse,
     .digest('hex').slice(0, 12);
   // Age of the briefing itself: updatedAt moves on every re-check, so it could never expire one.
   const prevAge = prev?.briefedAt ? nowMs() - Date.parse(prev.briefedAt) : Infinity;
-  if (prev?.fingerprint === fingerprint && prevAge < 6 * 3600_000 && prev.events?.length) {
+  // An algorithm-only briefing (AI was paused) is rewritten as soon as the model is allowed again.
+  if (prev?.fingerprint === fingerprint && prevAge < 6 * 3600_000 && prev.events?.length && !(prev.algorithmOnly && allowModel)) {
     await agentLog.putState('sol', 'latest', { ...prev, ...base, events: prev.events, briefing: prev.briefing, fingerprint });
     return {
       outcome: 'unchanged',
@@ -265,6 +266,18 @@ export async function runSentinel({ store, weather, climate, agentLog, converse,
     const d = LEVELS.indexOf(level) - LEVELS.indexOf(prevLevels.get(place));
     return d > 0 ? 'escalating' : d < 0 ? 'easing' : 'steady';
   };
+  const enrich = (e) => {
+    const a = candidates.find((c) => c.areaId === e.areaId);
+    return { ...e, trend: trendOf(a.place, e.level), headline: headlineFor(a), place: a.place, lat: a.lat, lon: a.lon, people: a.people, ehfWorst: a.ehf.worst, ceiling: a.ceiling };
+  };
+  if (!allowModel) {
+    // AI work is paused (operator or daily budget): the algorithm still reports every heat signal.
+    const enriched = [...candidates.map((c) => enrich({ areaId: c.areaId, level: c.ceiling, reason: 'From the algorithm alone (AI work paused).' })), ...carriedEvents];
+    const briefing = [`AI briefing paused. Heat signals from the algorithm: ${enriched.map((e) => e.headline).join('; ')}.`, staleNote].filter(Boolean).join(' ');
+    await agentLog.putState('sol', 'latest', { ...base, briefing, events: enriched, fingerprint, model: null, briefedAt: nowIso, algorithmOnly: true });
+    return { outcome: 'algorithm-only', summary: `${scanned}: ${enriched.length} heat event(s) from the algorithm alone (AI paused).`, detail: { events: enriched.map(({ place, level, trend, headline }) => ({ place, level, trend, headline })) } };
+  }
+
   const signal = (c) => ({
     areaId: c.areaId, place: c.place, people: c.people, vulnerablePeople: c.vulnerable, outdoorWorkers: c.workers,
     evidenceCeiling: c.ceiling, previousLevel: prevLevels.get(c.place) ?? null,
@@ -318,13 +331,7 @@ export async function runSentinel({ store, weather, climate, agentLog, converse,
 
   const { events } = run.value;
   const briefing = [run.value.briefing, staleNote].filter(Boolean).join(' ');
-  const enriched = [
-    ...events.map((e) => {
-      const a = candidates.find((c) => c.areaId === e.areaId);
-      return { ...e, trend: trendOf(a.place, e.level), headline: headlineFor(a), place: a.place, lat: a.lat, lon: a.lon, people: a.people, ehfWorst: a.ehf.worst, ceiling: a.ceiling };
-    }),
-    ...carriedEvents,
-  ];
+  const enriched = [...events.map(enrich), ...carriedEvents];
   await agentLog.putState('sol', 'latest', { ...base, briefing, events: enriched, fingerprint, model: run.model, briefedAt: nowIso });
   const emergencies = enriched.filter((e) => e.level === 'emergency').length;
   return {

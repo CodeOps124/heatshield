@@ -38,6 +38,7 @@ export function mountOffice(root, { compact = false, onSelect = null } = {}) {
   const anchors = office.anchors();
 
   const bubbles = {};
+  const tags = {};
   const timers = {};
   let scale = 1;
   for (const [id, meta] of Object.entries(AGENT_META)) {
@@ -54,6 +55,7 @@ export function mountOffice(root, { compact = false, onSelect = null } = {}) {
     Object.assign(tag.dataset, { x: a.x, y: a.top + 11 });
     Object.assign(button.dataset, { x: a.x - 34, y: a.top - 28, w: 68, h: 50 });
     bubbles[id] = bubble;
+    tags[id] = tag;
   }
 
   // Keeps the whole bubble inside the office; the tail still points at the speaker.
@@ -125,7 +127,8 @@ export function mountOffice(root, { compact = false, onSelect = null } = {}) {
 
   function sync(data) {
     for (const a of data.agents ?? []) {
-      office.setBase(a.id, a.status === 'working' ? 'working' : a.status === 'error' ? 'error' : a.status === 'waiting' ? 'waiting' : 'idle');
+      office.setBase(a.id, a.status === 'working' ? 'working' : a.status === 'error' ? 'error' : a.status === 'waiting' || a.status === 'paused' ? 'waiting' : 'idle');
+      tags[a.id]?.classList.toggle('paused', a.status === 'paused');
       const at = a.lastRun?.at;
       if (at && seen[a.id] && at !== seen[a.id] && !firstSync) {
         // A run finished since the last poll: show the agent working, then what it did.

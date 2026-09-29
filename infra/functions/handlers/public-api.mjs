@@ -6,6 +6,7 @@ import { createGuidanceService } from '../lib/guidance.mjs';
 import { createStore } from '../lib/store.mjs';
 import { createAgentLog } from '../lib/agent-log.mjs';
 import { createAgentsApi } from '../lib/agents-api.mjs';
+import { createControl } from '../lib/control.mjs';
 import { createLanguageReviewer } from '../lib/agents/language-reviewer.mjs';
 import { createSafetyReviewer } from '../lib/agents/safety-reviewer.mjs';
 import { dynamo, converse, tables, models, reviewerModels, invokeAgent } from '../lib/aws.mjs';
@@ -13,6 +14,7 @@ import { log } from '../lib/util.mjs';
 
 const store = createStore({ db: dynamo, tables });
 const agentLog = createAgentLog({ db: dynamo, table: tables.agentLog });
+const control = createControl({ agentLog });
 
 export const handler = createPublicApi({
   weather: createWeatherClient(),
@@ -22,13 +24,15 @@ export const handler = createPublicApi({
     models,
     log,
     agentLog,
+    gate: () => control.generation('mira'), // operator pause or the daily budget brake
     reviewers: {
       language: createLanguageReviewer({ converse, models: reviewerModels }),
       safety: createSafetyReviewer({ converse, models: reviewerModels }),
     },
   }),
-  agentsApi: createAgentsApi({ agentLog }),
+  agentsApi: createAgentsApi({ agentLog, control }),
   agentLog,
+  control,
   runAgentNow: invokeAgent,
   version: process.env.APP_VERSION ?? 'dev',
   region: process.env.AWS_REGION,

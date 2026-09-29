@@ -13,6 +13,7 @@ import {
 } from '@aws-sdk/client-sns';
 import { CloudWatchLogsClient, FilterLogEventsCommand, DescribeLogGroupsCommand } from '@aws-sdk/client-cloudwatch-logs';
 import { LambdaClient, InvokeCommand } from '@aws-sdk/client-lambda';
+import { SQSClient, GetQueueAttributesCommand, ReceiveMessageCommand, PurgeQueueCommand } from '@aws-sdk/client-sqs';
 
 const doc = DynamoDBDocumentClient.from(new DynamoDBClient({}), {
   marshallOptions: { removeUndefinedValues: true },
@@ -213,3 +214,68 @@ export async function invokeAgent(agentId) {
   if (!fn) throw new Error(`Agent ${agentId} cannot be run on demand`);
   return invokeSync(fn, { trigger: 'visitor', budgetMs: 20_000 });
 }
+
+// ---------------------------------------------------------------- agents by name (no template references)
+// Otto and the admin console invoke agents by the stack's naming convention rather than by template
+// reference: the public API invokes Otto, and a reference chain back to the distribution would be a
+// CloudFormation dependency cycle. Function names come from their log groups (/aws/lambda/<name>).
+export const AGENT_FUNCTIONS = Object.freeze({
+  sol: 'SentinelFunction', kai: 'CoordinatorFunction', otto: 'WatchdogFunction',
+  dispatch: 'AlertCheckFunction', quinn: 'AuditorFunction', iris: 'CoachFunction',
+});
+let functionNames = null;
+export async function functionFor(agentId) {
+  const logical = AGENT_FUNCTIONS[agentId];
+  if (!logical) throw new Error(`Unknown agent ${agentId}`);
+  if (!functionNames) {
+    const prefix = `/aws/lambda/${process.env.STACK_NAME}-`;
+    functionNames = (await logs.listGroups(prefix)).map((g) => g.slice('/aws/lambda/'.length));
+  }
+  const name = functionNames.find((n) => n.startsWith(`${process.env.STACK_NAME}-${logical}-`));
+  if (!name) throw new Error(`No deployed function for ${agentId}`);
+  return name;
+}
+
+/** Fire-and-forget run (a failed attempt is retried once, then lands in the dead-letter queue). */
+export async function invokeAgentAsync(agentId, payload) {
+  await lambda.send(new InvokeCommand({
+    FunctionName: await functionFor(agentId),
+    InvocationType: 'Event',
+    Payload: Buffer.from(JSON.stringify(payload)),
+  }));
+}
+
+/** Waits for the run's result (the admin console's "Run now"). */
+export async function invokeAgentSync(agentId, payload) {
+  return invokeSync(await functionFor(agentId), payload);
+}
+
+// ---------------------------------------------------------------- failed scheduled runs (dead-letter queue)
+const sqs = new SQSClient({});
+const queueUrl = () => process.env.FAILED_RUNS_QUEUE_URL;
+export const failedRuns = {
+  async count() {
+    if (!queueUrl()) return null;
+    const res = await sqs.send(new GetQueueAttributesCommand({ QueueUrl: queueUrl(), AttributeNames: ['ApproximateNumberOfMessages'] }));
+    return Number(res.Attributes?.ApproximateNumberOfMessages ?? 0);
+  },
+  /** Looks without consuming (visibility timeout 0), reduced to what the console needs. */
+  async peek(max = 10) {
+    if (!queueUrl()) return [];
+    const res = await sqs.send(new ReceiveMessageCommand({ QueueUrl: queueUrl(), MaxNumberOfMessages: Math.min(10, max), VisibilityTimeout: 0, WaitTimeSeconds: 0, MessageSystemAttributeNames: ['SentTimestamp'] }));
+    return (res.Messages ?? []).map((m) => {
+      let body = {};
+      try { body = JSON.parse(m.Body); } catch { /* not a Lambda destination record */ }
+      return {
+        at: new Date(Number(m.Attributes?.SentTimestamp ?? 0)).toISOString(),
+        function: String(body.requestContext?.functionArn ?? '').split(':').slice(6, 7)[0] ?? null,
+        condition: body.requestContext?.condition ?? null,
+        attempts: body.requestContext?.approximateInvokeCount ?? null,
+        error: String(body.responsePayload?.errorMessage ?? body.responsePayload?.errorType ?? '').slice(0, 300),
+      };
+    });
+  },
+  async purge() {
+    if (queueUrl()) await sqs.send(new PurgeQueueCommand({ QueueUrl: queueUrl() }));
+  },
+};

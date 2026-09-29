@@ -61,8 +61,20 @@ if (!args.has('--site-only')) {
   run('sam', ['validate', '--lint'], { cwd: INFRA });
   run('sam', ['build'], { cwd: INFRA });
   const params = JSON.parse(readFileSync(join(INFRA, 'params.json'), 'utf8'));
-  const overrides = Object.entries({ ...params, AppVersion: version }).map(([k, v]) => `${k}=${v}`);
-  run('sam', ['deploy', '--no-fail-on-empty-changeset', '--parameter-overrides', ...overrides], { cwd: INFRA });
+  const deploy = (siteDomain) => {
+    const overrides = Object.entries({ ...params, SiteDomain: siteDomain, AppVersion: version }).map(([k, v]) => `${k}=${v}`);
+    run('sam', ['deploy', '--no-fail-on-empty-changeset', '--parameter-overrides', ...overrides], { cwd: INFRA });
+  };
+  let siteDomain = params.SiteDomain ?? '';
+  if (!siteDomain) {
+    try { siteDomain = new URL(stackOutputs().SiteUrl).host; } catch { /* a brand-new stack has no outputs yet */ }
+  }
+  deploy(siteDomain);
+  if (!siteDomain) {
+    // First deploy of a new stack: the CloudFront domain exists only now, and the admin sign-in and
+    // the agents need it (passed as a parameter to avoid a dependency cycle), so deploy once more.
+    deploy(new URL(stackOutputs().SiteUrl).host);
+  }
 }
 
 const outputs = stackOutputs();

@@ -2,7 +2,7 @@
 import { api, qs } from './api.js';
 import {
   el, clear, notice, initThemeToggle, showVersion, hashParams, renderRiskSummary, renderGuidance, renderGuidanceLoading,
-  PROFILES, LANGUAGES, TIER_LABELS,
+  PROFILES, LANGUAGES, TIER_LABELS, showSiteNotice,
 } from './ui.js';
 import { renderHeatChart } from './chart.js';
 
@@ -22,6 +22,7 @@ function detailRow(label, value) {
 
 async function boot() {
   initThemeToggle($('theme-toggle'));
+  showSiteNotice();
   showVersion($('version'));
   if (!id || !token) {
     notice($('status'), 'Open this page with the private link you saved when you registered.');

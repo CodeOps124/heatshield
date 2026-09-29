@@ -1,6 +1,6 @@
 // Agent HQ: live office + activity feed + agent details + buttons that run real agents.
 import { api, qs } from './api.js';
-import { el, clear, notice, initThemeToggle, showVersion, PROFILES, LANGUAGES, TIER_LABELS, modelName, fallbackText } from './ui.js';
+import { el, clear, notice, initThemeToggle, showVersion, PROFILES, LANGUAGES, TIER_LABELS, modelName, fallbackText, showSiteNotice } from './ui.js';
 import { mountOffice, AGENT_META } from './office-live.js';
 import { OFFICE_W } from './pixel-office.js';
 
@@ -60,9 +60,14 @@ function renderStatus() {
   const w = data.watchdog;
   const runs = [...data.agents, ...(data.workers ?? [])].reduce((s, a) => s + (a.runs24h ?? 0), 0);
   const word = { healthy: 'All systems healthy', degraded: 'Degraded', down: 'Site down' }[w?.status] ?? 'Status unknown';
+  const up = w?.uptime;
+  const paused = data.control?.paused ?? [];
   const parts = [
     `${word}${w?.checkedAt ? ` (Otto checked ${ago(w.checkedAt)})` : ''}`,
+    up?.upPct != null ? `available ${up.upPct}% of ${up.checks} checks in ${up.windowDays} days` : null,
     `${runs} agent runs in the last 24 h`,
+    data.control?.aiPaused ? 'new AI work paused by the operator or the daily budget' : null,
+    paused.length ? `paused: ${paused.map((id) => AGENT_META[id]?.name ?? id).join(', ')}` : null,
     data.sentinel ? `Sol is watching ${data.sentinel.areas.length} areas, ${data.sentinel.events.length} heat event(s)` : null,
   ].filter(Boolean);
   $('hq-status').textContent = parts.join(' · ');
@@ -150,6 +155,8 @@ function specialFor(a) {
             el('td', {}, p.id), el('td', {}, p.ok ? (p.anomaly ? 'slow' : 'ok') : `failed (${p.status})`),
             el('td', { class: 'num' }, `${p.ms} ms`), el('td', { class: 'num' }, p.avgMs ? `${p.avgMs} ms` : '—'))))),
         el('p', { class: 'hint' }, `Heartbeats: ${(w.heartbeats ?? []).map((h) => `${h.agent} ${h.minutesAgo ?? '—'} min ago`).join(' · ')}`),
+        w.uptime?.upPct != null ? el('p', { class: 'hint' }, `Availability, last ${w.uptime.windowDays} days: ${w.uptime.upPct}% up, ${w.uptime.healthyPct}% fully healthy (${w.uptime.checks} checks since ${w.uptime.since}).`) : null,
+        (w.remediations ?? []).length ? el('p', { class: 'hint' }, `Self-repair on the last check: ${w.remediations.map((r) => `re-ran ${AGENT_META[r.agent]?.name ?? r.agent}${r.ok ? '' : ' (failed)'}`).join(', ')}.`) : null,
         (w.issues ?? []).filter((i) => i.severity === 'info').map((i) => el('p', { class: 'hint' }, `Note: ${i.detail}`)),
         w.incident ? el('div', { class: 'callout info mt-6' }, el('p', {}, el('strong', {}, `Last incident: ${w.incident.title}`), `${w.incident.summary} Likely cause: ${w.incident.likelyCause}`)) : null);
     }
@@ -360,6 +367,7 @@ $('task-btn').addEventListener('click', async (e) => {
 
 // ---------------------------------------------------------------- boot
 initThemeToggle($('theme-toggle'));
+showSiteNotice();
 showVersion($('version'));
 poll();
 setInterval(() => { if (!document.hidden) poll(); }, POLL_MS);

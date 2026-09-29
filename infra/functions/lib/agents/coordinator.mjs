@@ -100,7 +100,7 @@ export function parseCoordinatorOutput(text, schedule) {
   };
 }
 
-async function planGroup({ group, store, weather, agentLog, converse, models, nowMs, deadline, sentinel }) {
+async function planGroup({ group, store, weather, agentLog, converse, models, nowMs, deadline, sentinel, allowModel = true }) {
   const members = await store.listGroupMembers(group.groupId);
   if (members.length === 0) return null; // nothing to plan for an empty group
   const risks = await riskForMany(weather, members);
@@ -114,6 +114,22 @@ async function planGroup({ group, store, weather, agentLog, converse, models, no
   const forModel = schedule.slice(0, MAX_FOR_MODEL);
   const cells = new Set(members.map((m) => `${m.lat},${m.lon}`));
   const events = (sentinel?.events ?? []).filter((e) => cells.has(`${e.lat},${e.lon}`)).map(({ place, level, trend, headline }) => ({ place, level, trend, headline }));
+  const shape = (rows) => rows.map(({ locationId, order, checkInBy, urgency, action, reason, next12Tier, riskyHours, writtenBy }) => ({ locationId, order, checkInBy, urgency, action, reason, tier: next12Tier, riskyHours, writtenBy }));
+
+  if (!allowModel) {
+    // AI work is paused: the algorithm's order and deadlines stand, with template wording.
+    const plan = {
+      allClear: false,
+      summary: `${schedule.length} people need a check-in. The order and deadlines come from the urgency score; AI wording is paused, so each action is a template.`,
+      teamNote: '',
+      checkIns: shape(schedule.map((s) => ({ ...s, action: templateAction(s), reason: `${TIER_LABELS[s.next12Tier]} expected.`, writtenBy: 'template' }))),
+      members: members.length,
+      heatEvents: events,
+      model: null,
+    };
+    await agentLog.putState('kai', `group#${group.groupId}`, plan);
+    return { plan, usage: { inputTokens: 0, outputTokens: 0 }, toolCalls: [], turns: 0, model: null };
+  }
 
   const run = await runAgent({
     agent: {
@@ -154,7 +170,7 @@ async function planGroup({ group, store, weather, agentLog, converse, models, no
     allClear: false,
     summary: parsed.summary,
     teamNote: parsed.teamNote,
-    checkIns: [...parsed.checkIns, ...rest].map(({ locationId, order, checkInBy, urgency, action, reason, next12Tier, riskyHours, writtenBy }) => ({ locationId, order, checkInBy, urgency, action, reason, tier: next12Tier, riskyHours, writtenBy })),
+    checkIns: shape([...parsed.checkIns, ...rest]),
     members: members.length,
     heatEvents: events,
     model: run.model,
@@ -163,7 +179,7 @@ async function planGroup({ group, store, weather, agentLog, converse, models, no
   return { plan, usage: run.usage, toolCalls: run.toolCalls, turns: run.turns, model: run.model };
 }
 
-export async function runCoordinator({ store, weather, agentLog, converse, models, groupId = null, nowMs = () => Date.now(), deadline = Date.now() + 240_000 }) {
+export async function runCoordinator({ store, weather, agentLog, converse, models, groupId = null, nowMs = () => Date.now(), deadline = Date.now() + 240_000, allowModel = true }) {
   const groups = groupId ? [await store.getGroup(groupId)].filter(Boolean) : await store.listAllGroups();
   const sentinel = await agentLog.getState('sol', 'latest');
   const usage = { inputTokens: 0, outputTokens: 0 };
@@ -174,7 +190,7 @@ export async function runCoordinator({ store, weather, agentLog, converse, model
   let turns = 0;
   for (const group of groups.slice(0, 20)) {
     if (deadline - nowMs() < 20_000) break;
-    const r = await planGroup({ group, store, weather, agentLog, converse, models, nowMs, deadline, sentinel });
+    const r = await planGroup({ group, store, weather, agentLog, converse, models, nowMs, deadline, sentinel, allowModel });
     if (!r) continue;
     planned += 1;
     checkIns += r.plan.checkIns.length;

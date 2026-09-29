@@ -23,7 +23,26 @@ export function fallbackText(reason) {
     reviewers_rejected: 'HeatShield\'s reviewers did not approve the AI draft, so vetted advice is shown instead',
     revision_failed: 'HeatShield\'s reviewers did not approve the AI draft, so vetted advice is shown instead',
     writer_unavailable: 'AI guidance is temporarily unavailable',
+    budget_paused: 'new AI plans are paused for the rest of the day (cost limit), so vetted advice is shown',
+    ai_paused: 'the operator has paused new AI plans, so vetted advice is shown',
+    paused: 'the operator has paused new AI plans, so vetted advice is shown',
   }[reason] ?? 'AI guidance is temporarily unavailable';
+}
+
+/** The operator's site-wide notice (set in the admin console), shown under the header on every page. */
+export async function showSiteNotice() {
+  try {
+    const res = await fetch('/api/notice');
+    if (!res.ok) return;
+    const { notice } = await res.json();
+    if (!notice?.text) return;
+    const header = document.querySelector('.site-header');
+    const banner = el('div', { class: `site-notice ${notice.level}`, role: 'status' },
+      el('div', { class: 'wrap' }, el('strong', {}, notice.level === 'danger' ? 'Heat emergency: ' : notice.level === 'warning' ? 'Heat warning: ' : 'Notice: '), notice.text));
+    header?.after(banner);
+  } catch {
+    // No notice is better than a broken page.
+  }
 }
 
 export const PROFILES = {

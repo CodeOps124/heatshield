@@ -56,7 +56,8 @@ export function createFakeDb() {
     async query({ table, index, values, limit = 100, forward = true }) {
       let items = [...data[table].values()];
       if (table === 'agentLog') {
-        items = items.filter((i) => i.pk === values[':p']).sort((a, b) => a.sk.localeCompare(b.sk) * (forward ? 1 : -1));
+        items = items.filter((i) => i.pk === values[':p'] && (values[':s'] === undefined || i.sk >= values[':s']))
+          .sort((a, b) => a.sk.localeCompare(b.sk) * (forward ? 1 : -1));
         return items.slice(0, limit).map(clone);
       }
       if (index === 'byGroup') items = items.filter((i) => i.groupId === values[':g']);

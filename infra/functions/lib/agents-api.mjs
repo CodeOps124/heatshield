@@ -17,7 +17,7 @@ const runView = ({ at, trigger, outcome, durationMs, model, summary, inputTokens
   detail: detail ?? null,
 });
 
-export function createAgentsApi({ agentLog, nowMs = () => Date.now() }) {
+export function createAgentsApi({ agentLog, control = null, nowMs = () => Date.now() }) {
   let cached = null;
 
   async function build() {
@@ -25,9 +25,14 @@ export function createAgentsApi({ agentLog, nowMs = () => Date.now() }) {
     const dayAgo = now - 86_400_000;
     const everyone = [...ROSTER, ...WORKERS];
     const runs = Object.fromEntries(await Promise.all(everyone.map(async (a) => [a.id, await agentLog.listRuns(a.id, a.id === 'otto' ? 100 : 40)])));
-    const [sentinel, watchdog] = await Promise.all([agentLog.getState('sol', 'latest'), agentLog.getState('otto', 'latest')]);
+    const [sentinel, watchdog, ctl] = await Promise.all([
+      agentLog.getState('sol', 'latest'), agentLog.getState('otto', 'latest'), control ? control.load() : null,
+    ]);
+    const paused = ctl?.settings.paused ?? {};
+    const aiPaused = Boolean(ctl && (ctl.settings.aiPaused || control.budgetTripped(ctl.budget)));
 
     const status = (id) => {
+      if (paused[id]) return 'paused';
       const [last] = runs[id];
       if (!last) return 'waiting';
       if (last.outcome === 'error') return 'error';
@@ -59,6 +64,8 @@ export function createAgentsApi({ agentLog, nowMs = () => Date.now() }) {
 
     return {
       generatedAt: new Date(now).toISOString(),
+      // Operator state, without the budget figures (those stay in the admin console).
+      control: { paused: Object.keys(paused).filter((k) => paused[k]), aiPaused },
       agents: ROSTER.map(summarize),
       workers: WORKERS.map(summarize),
       // City-level only: no head counts, coordinates rounded to ~11 km.
@@ -79,6 +86,8 @@ export function createAgentsApi({ agentLog, nowMs = () => Date.now() }) {
             probes: watchdog.probes,
             heartbeats: watchdog.heartbeats,
             issues: watchdog.issues,
+            uptime: watchdog.uptime ?? null,
+            remediations: watchdog.remediations ?? [],
             incident: watchdog.incident ? { title: watchdog.incident.title, severity: watchdog.incident.severity, summary: watchdog.incident.summary, likelyCause: watchdog.incident.likelyCause, recommendedAction: watchdog.incident.recommendedAction, at: watchdog.incident.updatedAt } : null,
           }
         : null,

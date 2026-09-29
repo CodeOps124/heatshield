@@ -2,7 +2,7 @@
 import { api } from './api.js';
 import {
   el, clear, notice, tierBadge, initThemeToggle, showVersion, hashParams, linkBox, fmtC, hhmm, icon,
-  TIER_LABELS, LANGUAGES,
+  TIER_LABELS, LANGUAGES, showSiteNotice,
 } from './ui.js';
 
 const TIER_ORDER = ['lower', 'caution', 'extreme_caution', 'danger', 'extreme_danger'];
@@ -177,6 +177,7 @@ async function load() {
 }
 
 initThemeToggle($('theme-toggle'));
+showSiteNotice();
 showVersion($('version'));
 $('refresh').addEventListener('click', load);
 load();

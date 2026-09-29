@@ -12,7 +12,7 @@ const RUN_TTL_DAYS = 14;
 
 export function createAgentLog({ db, table, nowMs = () => Date.now() }) {
   return {
-    async recordRun(agent, run) {
+    async recordRun(agent, run, { ttlDays = RUN_TTL_DAYS } = {}) {
       const at = new Date(nowMs()).toISOString();
       const item = {
         pk: `run#${agent}`,
@@ -20,7 +20,7 @@ export function createAgentLog({ db, table, nowMs = () => Date.now() }) {
         agent,
         at,
         ...run,
-        expiresAt: Math.floor(nowMs() / 1000) + RUN_TTL_DAYS * 86400,
+        expiresAt: Math.floor(nowMs() / 1000) + ttlDays * 86400,
       };
       await db.put({ table, item });
       return item;
@@ -28,6 +28,10 @@ export function createAgentLog({ db, table, nowMs = () => Date.now() }) {
 
     listRuns: (agent, limit = 10) =>
       db.query({ table, keyCondition: 'pk = :p', values: { ':p': `run#${agent}` }, limit, forward: false }),
+
+    /** Runs at or after `sinceIso`, newest first (sort keys start with the ISO time). */
+    listRunsSince: (agent, sinceIso, limit = 2000) =>
+      db.query({ table, keyCondition: 'pk = :p AND sk >= :s', values: { ':p': `run#${agent}`, ':s': sinceIso }, limit, forward: false }),
 
     async putState(agent, key, value) {
       await db.put({ table, item: { pk: `state#${agent}`, sk: key, value, updatedAt: new Date(nowMs()).toISOString() } });

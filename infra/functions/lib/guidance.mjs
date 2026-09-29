@@ -216,7 +216,7 @@ const summarizeReview = (r) =>
  * @param {object} [deps.agentLog]   records each agent's run for the Agent Console
  */
 export function createGuidanceService({
-  converse, cache, models, log, reviewers = null, agentLog = null,
+  converse, cache, models, log, reviewers = null, agentLog = null, gate = null,
   nowSeconds = () => Math.floor(Date.now() / 1000), nowMs = () => Date.now(),
 }) {
   const record = (agent, run) => (agentLog ? agentLog.recordRun(agent, run).catch((err) => log.warn('agent_log_failed', { agent, message: err.message })) : null);
@@ -323,7 +323,7 @@ export function createGuidanceService({
     };
   }
 
-  async function getGuidance(risk, language, { budgetMs = DEFAULT_BUDGET_MS } = {}) {
+  async function produce(risk, language, { budgetMs = DEFAULT_BUDGET_MS } = {}) {
     const deadline = nowMs() + budgetMs;
     const input = buildGuidanceInput(risk, language);
     const key = cacheKeyFor(input);
@@ -333,7 +333,7 @@ export function createGuidanceService({
       if (hit && hit.expiresAt > nowSeconds()) {
         return {
           ...hit.guidance, language, languageFallback: false, source: 'cache', model: hit.model,
-          review: hit.review ?? null, factsUsed: hit.factsUsed ?? [],
+          review: hit.review ?? null, factsUsed: hit.factsUsed ?? [], speechKey: key,
         };
       }
     } catch (err) {
@@ -357,8 +357,15 @@ export function createGuidanceService({
         ...fallbackGuidance({ tier, profileId: input.profileId, language }),
         source: 'fallback', model: null, fallbackReason: why,
         review: reviewResult, factsUsed: facts.map((f) => f.id),
+        speechKey: `fb.${tier}.${input.profileId}.${language}`,
       };
     };
+
+    // Operator pause or the daily budget brake: no new AI work. Approved plans still come from the cache.
+    if (gate) {
+      const allowed = await gate().catch(() => ({ ok: true }));
+      if (!allowed.ok) return fallback(allowed.reason);
+    }
 
     let draft;
     try {
@@ -427,7 +434,27 @@ export function createGuidanceService({
     return {
       ...draft.guidance, language, languageFallback: false, source: 'bedrock', model: draft.model,
       review: reviewSummary, factsUsed: facts.map((f) => f.id),
+      speechKey: verdict.approved || verdict.skipped ? key : null, // only cached plans can be read aloud
     };
+  }
+
+  async function getGuidance(risk, language, opts = {}) {
+    const g = await produce(risk, language, opts);
+    // The final outcome of every new plan, for the admin console's quality figures and recall list.
+    if (g.source !== 'cache') {
+      const input = buildGuidanceInput(risk, language);
+      const outcome = g.source === 'fallback' ? 'fallback' : g.review?.status === 'unreviewed' ? 'unreviewed' : 'published';
+      await record('plans', {
+        trigger: 'plan',
+        outcome,
+        summary: `${LANGUAGES[language].name} plan for ${PROFILE_DESCRIPTIONS[input.profileId].split(' (')[0]} (${TIER_LABELS[input.next12hTier]}): ${outcome}${g.fallbackReason ? ` (${g.fallbackReason})` : ''}.`,
+        detail: {
+          language, profile: input.profileId, tier: input.next12hTier, source: g.source, reason: g.fallbackReason ?? null,
+          revisions: g.review?.revisions ?? 0, cacheKey: g.source === 'bedrock' ? g.speechKey : null, headline: g.headline, model: g.model ?? null,
+        },
+      });
+    }
+    return g;
   }
 
   return { getGuidance };

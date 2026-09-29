@@ -7,6 +7,7 @@ import { createWeatherClient } from '../lib/weather.mjs';
 import { createGuidanceService } from '../lib/guidance.mjs';
 import { createStore } from '../lib/store.mjs';
 import { createAgentLog, recorded } from '../lib/agent-log.mjs';
+import { createControl } from '../lib/control.mjs';
 import { createLanguageReviewer } from '../lib/agents/language-reviewer.mjs';
 import { createSafetyReviewer } from '../lib/agents/safety-reviewer.mjs';
 import { dynamo, converse, notifier, tables, models, reviewerModels } from '../lib/aws.mjs';
@@ -14,9 +15,11 @@ import { log } from '../lib/util.mjs';
 
 const store = createStore({ db: dynamo, tables });
 const agentLog = createAgentLog({ db: dynamo, table: tables.agentLog });
+const control = createControl({ agentLog });
 const weather = createWeatherClient();
+// Alerts are never paused. With AI work paused, their advice comes from the cache or is pre-written.
 const guidance = createGuidanceService({
-  converse, cache: store.guidanceCache, models, log, agentLog,
+  converse, cache: store.guidanceCache, models, log, agentLog, gate: () => control.generation('mira'),
   reviewers: {
     language: createLanguageReviewer({ converse, models: reviewerModels }),
     safety: createSafetyReviewer({ converse, models: reviewerModels }),
@@ -25,7 +28,8 @@ const guidance = createGuidanceService({
 
 export const handler = async (event = {}) => {
   const forceLocationId = typeof event.forceLocationId === 'string' ? event.forceLocationId : null;
-  return recorded(agentLog, 'dispatch', forceLocationId ? 'manual' : 'schedule', async () => {
+  const trigger = typeof event.trigger === 'string' ? event.trigger : forceLocationId ? 'manual' : 'schedule';
+  return recorded(agentLog, 'dispatch', trigger, async () => {
     const summary = await runAlertCheck({ store, weather, guidance, notifier, log, siteUrl: process.env.SITE_URL, forceLocationId });
     return {
       ...summary,

@@ -4,6 +4,7 @@
  *   GET /api/geocode?q=Karachi
  *   GET /api/risk?lat=..&lon=..&profile=..
  *   GET /api/guidance?lat=..&lon=..&profile=..&lang=..
+ *   GET /api/notice             the operator's site-wide notice, if any
  */
 import { assessRisk, PROFILES } from './heat.mjs';
 import { isLanguage } from './languages.mjs';
@@ -29,8 +30,10 @@ export function parseLanguage(value) {
 // no matter how many people click: at most 144 Sol runs and 720 Otto runs a day.
 export const ON_DEMAND_COOLDOWN_MS = { sol: 10 * 60_000, otto: 2 * 60_000 };
 
-export function createPublicApi({ weather, guidance, version, region, agentsApi = null, agentLog = null, runAgentNow = null, now = () => Date.now() }) {
+export function createPublicApi({ weather, guidance, version, region, agentsApi = null, agentLog = null, runAgentNow = null, control = null, now = () => Date.now() }) {
   return router({
+    'GET /api/notice': async () => json(200, { notice: control ? await control.notice() : null }),
+
     'GET /api/agents': async () => {
       if (!agentsApi) return json(404, { error: { code: 'not_found', message: 'No such route' } });
       return json(200, await agentsApi.get());
@@ -42,6 +45,13 @@ export function createPublicApi({ weather, guidance, version, region, agentsApi 
         throw new HttpError(404, 'not_found', 'Only Sol and Otto can be run on demand.');
       }
       if (!agentLog || !runAgentNow) throw new HttpError(503, 'unavailable', 'On-demand runs are not available.');
+      const name = agentId === 'sol' ? 'Sol' : 'Otto';
+      if (control) {
+        if (await control.isPaused(agentId)) return json(409, { error: { code: 'paused', message: `${name} is paused by the operator.` } });
+        // Otto works without a model when things are healthy, so only Sol is stopped by the AI brake.
+        const allowed = agentId === 'sol' ? await control.generation('sol') : { ok: true };
+        if (!allowed.ok) return json(503, { error: { code: allowed.reason, message: `${name} is not running new AI work right now: ${allowed.reason === 'budget_paused' ? "today's AI budget has been reached" : 'the operator paused AI work'}.` } });
+      }
       const last = await agentLog.getState('ondemand', agentId).catch(() => null);
       const since = last?.requestedAt ? now() - Date.parse(last.requestedAt) : Infinity;
       if (since < ON_DEMAND_COOLDOWN_MS[agentId]) {
