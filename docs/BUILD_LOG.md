@@ -321,3 +321,138 @@ cross-compiling for arm64) would add ship-gate risk for no user-visible gain. Ke
 - Switch day-to-day CLI work from the root user to a least-privilege IAM identity.
 - Publish the repo (GitHub), record the 2–3 minute demo video, tag `#social-good` + `#community`
   in Builder Center.
+
+### 2026-09-28/29 — Session 3: six AI agents, and what their first live night exposed
+
+**Goal:** make HeatShield run itself, with agents that each own a real job, as other entries in the
+hackathon do, but with real algorithms under each one rather than a prompt with a persona.
+
+**Built (commit `8606bf4`, 28 Sep 20:09 UTC):** an auditable Bedrock Converse tool-use loop
+(`agent-runtime.mjs`: the model picks tools; the runtime enforces turns, deadline and output size;
+every run is recorded to a new DynamoDB `AgentLog` table), then six agents:
+
+| Agent | Algorithm (the exact part) | Model (the judgment part) |
+|---|---|---|
+| Sol, hourly | Excess Heat Factor (Nairn & Fawcett 2015, checked against the paper, PMC4306859) vs each city's 1991–2020 ERA5 climatology, NWS tiers, OLS trend | which areas get a watch/warning/emergency, capped by the algorithm's evidence ceiling |
+| Mira | BM25 retrieval over a 21-fact vetted CDC/NIOSH/NWS library | the plan, in 13 languages |
+| Lexi | multinomial naive-Bayes language ID (free, before any model call) | literal back-translation and review (Nova Pro) |
+| Vera | detectors for phone numbers, medicines, doses | rubric review (Nova Pro) |
+| Kai, 3-hourly | logistic urgency score + earliest-deadline-first scheduling across time zones | the wording of each check-in; names never reach the model |
+| Otto, every 15 min | 5 probes, EWMA control charts, heartbeats, CloudWatch error counts | an incident report, only for a new incident |
+
+**The first live night (28 Sep 20:31 → 29 Sep 10:30 UTC)**, read back from `AgentLog` and CloudWatch
+through the AWS MCP server: 56 Otto runs, 15 Sol, 14 Dispatcher, 5 Kai, 2 each for Mira, Lexi and
+Vera. It exposed six real problems, each fixed with a regression test named after the event
+(commit `52dfae5`, `infra/tests/regressions.test.mjs`):
+1. Sol failed once on malformed model JSON → one repair turn for every agent's structured output.
+2. Lexi and Vera rejected correct drafts over style and over "a cup every 15 minutes" (the fact
+   says 15–20) → issues carry a category and severity, and **code computes the verdict**.
+3. The Dispatcher "emailed" an unconfirmed SNS subscription, which SNS silently drops → pending
+   subscriptions are dashboard-only.
+4. Otto missed guidance failures in the alert Lambda and blamed a latency blip on "resource
+   contention" → it counts both functions and probes Open-Meteo separately (`upstream_slow`).
+5. Sol lost areas to the Open-Meteo archive's rate limit on its first runs → at most 3 new 30-year
+   climatologies per run; heat-index-only judgement meanwhile.
+6. Kai counted empty test groups → skipped; `DELETE /api/groups/{id}` added.
+
+Then (commit `acc9982`) visitors can run Sol and Otto on demand, behind a **global** per-agent
+cooldown and route throttling, so spend is capped however many people click. Otto finds log groups
+by stack prefix and gets the site URL from the schedule's `Input`, which avoids a CloudFormation
+dependency cycle (the public API invokes Otto, and Otto watches the public API).
+
+### 2026-09-29 — Session 4: Agent HQ, and a day of deploy → measure → fix
+
+**Goal:** show the agents working (a pixel-art office, like the "AI agents in an office" videos),
+and make everything they say correct. Thirteen commits, `18d21bb` (11:18 UTC) to `5df01e1`
+(12:27 UTC), each deployed with `npm run deploy` and checked live before the next.
+
+**Agent HQ** (`/agents.html`): a 320×192 office drawn in code (no image assets) with crisp HTML
+overlays, driven by `GET /api/agents` every 20 s. Status lamps, a wall map of Sol's cities and heat
+events, speech from each agent's last real run (with its age once it is older than 30 minutes),
+the activity feed, an agent panel, and buttons that run real agents. Headless-Chrome screenshots
+caught three layout bugs before users did: speech bubbles covering name plates, an empty wall map
+(the stored state predated city coordinates; events now plot as a fallback), and a CSS rule
+(`.section { padding: 40px 0 }`) that silently removed the 16 px side gutter on phones on five pages.
+
+**What reading the live output taught us.** Every item below was found by deploying, running the
+agent, and reading its output back through the AWS MCP server (DynamoDB `GetItem`/`Query` on
+`AgentLog`, CloudWatch `FilterLogEvents`, Lambda `Invoke`), then checking it against the forecast.
+
+- *Open-Meteo refused 2 of Sol's 10 cities.* Sol's stored state, read through the MCP server:
+  ```
+  "failures": [{"place": "Manila, Philippines", "stage": "forecast", "message": "Open-Meteo HTTP 429"},
+               {"place": "Lagos, Nigeria", "stage": "forecast", "message": "Open-Meteo HTTP 429"}]
+  ```
+  Open-Meteo limits per IP, and Lambda shares outbound IPs. The weather client now retries a 429
+  once; Sol retries refused cities after a pause; a city still refused keeps its last good data for
+  up to 3 hours, marked stale. The board count had been flapping (10 → 9 → 10 → 8).
+- *A rule that could never fire.* Sol's "re-brief at least every 6 hours" compared against
+  `updatedAt`, which every "unchanged" re-check refreshed. It now uses `briefedAt`. The regression
+  test fails on the old code (verified by reverting the line).
+- *Trends and wording.* After a forced re-brief, Dubai, Cuiabá and Dhaka were all "new" although
+  they were in the previous briefing, and the text said "danger-tier heat indices". Trends are now
+  arithmetic (level vs the previous briefing). A plain-language rewrite then produced
+  "Cuiabá keeps unusually hot for this place and time of year": the prompt had offered phrase
+  substitutions and the model applied them literally, then copied its own awkward text from the
+  previous briefing. The prompt now describes intent with full-sentence examples, and the model sees
+  only the previous levels, not the prose.
+- *A factual error in a headline.* The model wrote "dangerous heat in Cuiabá on Wednesday and
+  Thursday"; `/api/risk` showed Thursday one tier lower:
+  ```
+  Cuiaba Tue 09-29 extreme_caution 39.4 | Wed 09-30 danger 41.1 | Thu 10-01 extreme_caution 36.3 | Fri 10-02 extreme_caution 32.6
+  ```
+  Event headlines are now written by code from the tiers, with weekday names computed from the dates
+  ("Cuiabá: dangerous heat and humidity on Wednesday; hotter than usual for this time of year on
+  Tuesday"). The model still chooses levels and writes the briefing paragraph.
+- *Otto's diagnosis.* Every uncached plan tries Claude Haiku first. CloudWatch, through the MCP server:
+  ```
+  {"level":"warn","msg":"bedrock_guidance_failed","modelId":"us.anthropic.claude-haiku-4-5-20251001-v1:0",
+   "error":"ResourceNotFoundException","message":"Model use case details have not been submitted for this account. ..."}
+  ```
+  Otto marked the site "degraded" and guessed "transient primary model unavailability". It now
+  samples the actual error lines: access/setup errors become an info note with the real reason, and
+  the site stays healthy; other failures still degrade.
+
+**The reviewers, measured.** The Dubai/Arabic featured example fell back to pre-written English
+advice in the end-to-end test. The agent log showed why: 22 of Lexi's 24 blocking objections were
+"fact" (a headline about today's peak read as a claim about the risk right now), and Vera objected
+that "sunscreen and a head covering may raise body temperature". `scripts/eval-guidance.mjs` asks
+the live API for one plan per language and reports each plan's review rounds. Calibration, one
+deploy per step:
+
+| Step | Change | New plans | Published |
+|---|---|---|---|
+| baseline (11:35–11:43 window) | — | 5 | 1 |
+| 1 | Lexi judges language (fact notes optional); Vera told vetted advice is never a violation | 15 | 12 |
+| 2 | writer resamples runaway replies (a Swahili reply hit the 1000-token limit); style vs omission defined | 16 | 10 |
+| 3 | Vera judges against the whole library (with only the retrieved subset she called "a cup every 15 minutes" overhydration); tolerant JSON (Chinese: raw newline, trailing comma); Nova Pro writes as a last resort | 19 | 10 |
+| 4 | code keeps wording complaints and omissions as notes; real errors still block (tested with the exact objections from steps 1–3) | 22 + 13 | 20 + 12 |
+| 5 | a harm objection must survive a second reading that points at words really in the message (Vera had blocked "a fan as the main cooling" while quoting a sentence about clothing) | 13 + 4 featured | 12 + 3 |
+
+After steps 4–5: **47 of 52 new plans published (90%)**, and each of the 5 rejections contained a
+real error: invented Swahili words (three times; "kichocho" means bilharzia, not dizzy), "barafu"
+(ice) where "baridi" (cool) was meant, "गड़गड़ाहट" (thunder) where "confusion" was meant among the
+Hindi heat-stroke signs, and a wrong decimal separator in Vietnamese. Measured Bedrock cost that
+day (~90 new plans plus all background agents): about US$0.72; about US$0.01 per new plan.
+
+**Other fixes from reading the product as a judge would:**
+- The leader dashboard never showed Kai's plan, although the API returned it and Agent HQ said
+  plans "live on each leader's private dashboard". It now has "Who to check on first".
+- Kai sorted on the rounded urgency (everyone 0.98), so ties fell back to input order.
+- Leaders can delete their group from the dashboard (the endpoint existed; the UI did not).
+- The page said "AI guidance is temporarily unavailable" when reviewers had rejected a draft; the
+  API already returned the reason.
+- "Revised a English plan" → "an English plan".
+
+**Testing.** 100 unit and regression tests. `scripts/e2e/live-flow.cjs` and
+`scripts/e2e/agent-hq.cjs` (headless Chrome, production) pass: risk → plan → group → join →
+dashboards with Kai's plan → delete my data → delete group → phone layout; every Agent HQ button
+(200, or 429 from a shared cooldown). Codex was unavailable this session (usage limit), so the second
+opinion on each change came from live measurement and from re-reading the diff adversarially.
+
+**Still open (needs the account owner):** the Anthropic use-case form (Claude becomes primary on
+its own afterwards); a confirmed email subscription for the alert proof; moving CLI work off the
+root user; publishing the repo; the demo video; Builder Center tags. And a decision: pre-written
+fallback advice exists in English, Spanish and French only (other languages fall back to English
+with a notice). Machine translations checked by the review agents would close that gap, but no
+native speaker would have checked them.

@@ -1,6 +1,6 @@
 # HeatShield — Build Plan
 
-## Status (updated 2026-09-28)
+## Status (updated 2026-09-29)
 Live: https://d3tda9dyutl7ux.cloudfront.net — details and real command output in `docs/BUILD_LOG.md`.
 
 | Phase | Status |
@@ -9,9 +9,11 @@ Live: https://d3tda9dyutl7ux.cloudfront.net — details and real command output 
 | 1 · Skeleton deploy / public URL | Done: SAM stack `heatshield` (us-east-1), CloudFront + S3 (OAC) + HTTP API. |
 | 2 · Data model + weather + risk engine | Done: 4 DynamoDB tables, Open-Meteo, NWS heat index verified vs MetPy. |
 | 3 · Registration + leader dashboard | Done: groups, invite links, dashboard, personal page, delete-my-data, read-only demo group. |
-| 4 · Bedrock localized guidance | Done: Claude Haiku 4.5 → Nova 2 Lite → static; cache; validation; 13 languages. Claude pending Anthropic use-case form (owner action). |
+| 4 · Bedrock localized guidance | Done: Mira writes, Lexi + Vera review (up to 2 revisions); cache; validation; 13 languages. Measured: 47 of 52 new plans published after calibration. Claude Haiku 4.5 is primary once the Anthropic use-case form is submitted (owner action); Nova serves until then. |
 | 5 · Alert loop | Done: EventBridge Scheduler hourly → Lambda → SNS; invoked manually (0 errors). Real email proof pending owner's subscription confirmation. |
-| 6 · Polish for judging | README, architecture diagram, screenshots, submission text, demo script done. Remaining: public repo, demo video, Builder Center tags. |
+| 6 · Polish for judging | README, architecture diagram, screenshots, submission text, demo script updated for the agents. Remaining: public repo, demo video, Builder Center tags. |
+| 7 · Six AI agents (beyond the original plan) | Done: Sol, Mira, Lexi, Vera, Kai, Otto on schedules and on demand; AgentLog; regression test per live incident; 100 tests. |
+| 8 · Agent HQ | Done: live pixel-art office, activity feed, agent panels, buttons that run real agents; home-page teaser; Kai's plan on the leader dashboard. |
 
 Read `CLAUDE.md` first. This is the order of operations, sized for a hackathon timeline
 (assume 3–5 focused working sessions before the deadline; adjust dates once you know the
