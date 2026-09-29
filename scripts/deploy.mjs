@@ -86,3 +86,18 @@ if (home !== 200 || !health.ok) {
   console.error('Smoke test FAILED — the ship gate is not green. (A brand-new CloudFront distribution can take a few minutes; re-run with --site-only.)');
   process.exit(1);
 }
+
+// Post-deploy check by Otto (the Ops Watchdog agent): probes the public URL, the API, the weather
+// provider and every agent's heartbeat. Also tells Otto the site URL for visitor-triggered runs.
+if (outputs.WatchdogFunctionName) {
+  const payloadFile = join(ROOT, '.otto-payload.json');
+  const outFile = join(ROOT, '.otto-result.json');
+  writeFileSync(payloadFile, JSON.stringify({ siteUrl: outputs.SiteUrl, trigger: 'post-deploy' }));
+  try {
+    run('aws', ['lambda', 'invoke', '--function-name', outputs.WatchdogFunctionName, '--cli-binary-format', 'raw-in-base64-out', '--payload', `fileb://${payloadFile}`, outFile, '--query', 'StatusCode', ...awsArgs], { capture: true });
+    const otto = JSON.parse(readFileSync(outFile, 'utf8'));
+    console.log(`  Otto (post-deploy)    -> ${otto.outcome}: ${otto.summary}`);
+  } catch (err) {
+    console.warn(`  Otto post-deploy check could not run: ${err.message}`);
+  }
+}

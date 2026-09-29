@@ -8,10 +8,13 @@ const WORKING_WINDOW_MS = 90_000;
 const CACHE_MS = 10_000;
 const round1 = (x) => (Number.isFinite(x) ? Math.round(x * 10) / 10 : null);
 
-const runView = ({ at, trigger, outcome, durationMs, model, summary, inputTokens, outputTokens, toolCalls }) => ({
+// Run details are written by the agents without personal data (places are cities, plans reference
+// pseudonymous ids, reviews quote generated text), so they are safe to show on the public console.
+const runView = ({ at, trigger, outcome, durationMs, model, summary, inputTokens, outputTokens, toolCalls, detail }) => ({
   at, trigger, outcome, durationMs, model, summary,
   tokens: (inputTokens ?? 0) + (outputTokens ?? 0),
   tools: (toolCalls ?? []).map((t) => t.name),
+  detail: detail ?? null,
 });
 
 export function createAgentsApi({ agentLog, nowMs = () => Date.now() }) {
@@ -62,10 +65,11 @@ export function createAgentsApi({ agentLog, nowMs = () => Date.now() }) {
       sentinel: sentinel
         ? {
             generatedAt: sentinel.updatedAt,
+            briefedAt: sentinel.briefedAt ?? null,
             briefing: sentinel.briefing,
             areasScanned: sentinel.areasScanned,
-            events: (sentinel.events ?? []).map(({ place, level, trend, headline, reason, ehfWorst, lat, lon }) => ({ place, level, trend, headline, reason, ehfWorst, lat: round1(lat), lon: round1(lon) })),
-            areas: (sentinel.areas ?? []).map(({ place, ceiling, ehfWorst, worstTier, lat, lon, climatePending }) => ({ place, ceiling, ehfWorst, worstTier, lat: round1(lat), lon: round1(lon), climatePending: Boolean(climatePending) })),
+            events: (sentinel.events ?? []).map(({ place, level, trend, headline, reason, ehfWorst, lat, lon, stale }) => ({ place, level, trend, headline, reason, ehfWorst, lat: round1(lat), lon: round1(lon), stale: Boolean(stale) })),
+            areas: (sentinel.areas ?? []).map(({ place, ceiling, ehfWorst, worstTier, lat, lon, climatePending, stale, asOf }) => ({ place, ceiling, ehfWorst, worstTier, lat: round1(lat), lon: round1(lon), climatePending: Boolean(climatePending), stale: Boolean(stale), asOf: asOf ?? null })),
           }
         : null,
       watchdog: watchdog

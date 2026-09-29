@@ -160,6 +160,32 @@ $('group-form').addEventListener('submit', async (e) => {
   }
 });
 
+// ---------------------------------------------------------------- agents teaser
+// The mini live office loads only when it scrolls into view.
+const teaser = $('office-teaser');
+if (teaser && 'IntersectionObserver' in window) {
+  const io = new IntersectionObserver(async (entries) => {
+    if (!entries.some((e) => e.isIntersecting)) return;
+    io.disconnect();
+    const { mountOffice } = await import('./office-live.js');
+    const live = mountOffice(teaser, { compact: true });
+    const poll = async () => {
+      try {
+        const data = await api('/api/agents');
+        live.sync(data);
+        const runs = [...data.agents, ...(data.workers ?? [])].reduce((s, a) => s + (a.runs24h ?? 0), 0);
+        const events = data.sentinel?.events?.length ?? 0;
+        $('teaser-status').textContent = `${runs} agent runs in the last 24 h · ${events} heat event(s) on Sol's board · site ${data.watchdog?.status ?? 'status unknown'}`;
+      } catch {
+        $('teaser-status').textContent = 'The agents could not be reached just now.';
+      }
+    };
+    poll();
+    setInterval(() => { if (!document.hidden) poll(); }, 30_000);
+  }, { rootMargin: '200px' });
+  io.observe(teaser);
+}
+
 // ---------------------------------------------------------------- boot
 initThemeToggle($('theme-toggle'));
 showVersion($('version'));

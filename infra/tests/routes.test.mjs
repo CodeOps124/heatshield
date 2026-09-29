@@ -228,3 +228,20 @@ test('visitors can run Sol or Otto on demand, behind a global per-agent cooldown
   assert.deepEqual(ran, ['otto', 'sol', 'otto']);
   assert.equal((await run('mira')).status, 404, 'only Sol and Otto can be run on demand');
 });
+
+test('a failed on-demand run reports the real reason and does not burn the cooldown', async () => {
+  const { db, tables } = createFakeDb();
+  const { createAgentLog } = await import('../functions/lib/agent-log.mjs');
+  const agentLog = createAgentLog({ db, table: tables.agentLog });
+  let fail = true;
+  const api = createPublicApi({
+    weather, guidance, version: 't', agentLog,
+    runAgentNow: async () => { if (fail) throw new Error('Otto does not know the public URL yet'); return { outcome: 'healthy' }; },
+  });
+  const run = async () => parse(await api(apiEvent('POST /api/agents/{agentId}/run', { pathParameters: { agentId: 'otto' } })));
+  const failed = await run();
+  assert.equal(failed.status, 502);
+  assert.match(failed.body.error.message, /Otto could not finish: Otto does not know the public URL yet/);
+  fail = false;
+  assert.equal((await run()).status, 200, 'retry allowed immediately after a failure');
+});

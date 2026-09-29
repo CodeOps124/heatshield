@@ -20,9 +20,14 @@ import { createWeatherClient } from '../infra/functions/lib/weather.mjs';
 import { createGuidanceService } from '../infra/functions/lib/guidance.mjs';
 import { createStore } from '../infra/functions/lib/store.mjs';
 import { log } from '../infra/functions/lib/util.mjs';
+import { createAgentLog } from '../infra/functions/lib/agent-log.mjs';
+import { createAgentsApi } from '../infra/functions/lib/agents-api.mjs';
 import { createFakeDb } from '../infra/tests/helpers.mjs';
 
 const PORT = Number(process.env.PORT ?? 8787);
+// HEATSHIELD_PROXY=https://<your-site> serves local frontend files but forwards /api/* to the live
+// deployment — handy for working on the UI (e.g. Agent HQ) against real agent data.
+const PROXY = process.env.HEATSHIELD_PROXY?.replace(/\/$/, '') ?? null;
 const ROOT = fileURLToPath(new URL('../frontend/', import.meta.url));
 const TYPES = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript', '.css': 'text/css', '.svg': 'image/svg+xml', '.json': 'application/json' };
 
@@ -42,14 +47,21 @@ const notifier = {
   publishAlert: async ({ subject }) => { console.log(`[dev] would publish: ${subject}`); return 'dev-message'; },
 };
 
-const publicApi = createPublicApi({ weather, guidance, version: 'local-dev', region: 'local' });
-const enrollmentApi = createEnrollmentApi({ store, notifier, weather });
+const agentLog = createAgentLog({ db, table: tables.agentLog });
+const publicApi = createPublicApi({
+  weather, guidance, version: 'local-dev', region: 'local', agentLog,
+  agentsApi: createAgentsApi({ agentLog }),
+  runAgentNow: async (id) => ({ outcome: 'local', summary: `${id} runs on AWS only; start the dev server with HEATSHIELD_PROXY to use the live agents.` }),
+});
+const enrollmentApi = createEnrollmentApi({ store, notifier, weather, agentLog });
 
 // Route table mirrors infra/template.yaml
 const ROUTES = [
   ['GET', '/api/health', publicApi], ['GET', '/api/geocode', publicApi], ['GET', '/api/risk', publicApi], ['GET', '/api/guidance', publicApi],
-  ['POST', '/api/groups', enrollmentApi], ['GET', '/api/groups/{groupId}', enrollmentApi],
-  ['GET', '/api/groups/{groupId}/dashboard', enrollmentApi], ['DELETE', '/api/groups/{groupId}/members/{locationId}', enrollmentApi],
+  ['GET', '/api/agents', publicApi], ['POST', '/api/agents/{agentId}/run', publicApi],
+  ['POST', '/api/groups', enrollmentApi], ['GET', '/api/groups/{groupId}', enrollmentApi], ['DELETE', '/api/groups/{groupId}', enrollmentApi],
+  ['GET', '/api/groups/{groupId}/dashboard', enrollmentApi], ['POST', '/api/groups/{groupId}/plan', enrollmentApi],
+  ['DELETE', '/api/groups/{groupId}/members/{locationId}', enrollmentApi],
   ['POST', '/api/locations', enrollmentApi], ['GET', '/api/locations/{locationId}', enrollmentApi], ['DELETE', '/api/locations/{locationId}', enrollmentApi],
 ];
 
@@ -67,6 +79,15 @@ function match(method, path) {
 const server = createServer(async (req, res) => {
   const url = new URL(req.url, `http://localhost:${PORT}`);
   try {
+    if (url.pathname.startsWith('/api/') && PROXY) {
+      let body;
+      if (!['GET', 'HEAD'].includes(req.method)) { body = ''; for await (const chunk of req) body += chunk; }
+      const headers = Object.fromEntries(Object.entries(req.headers).filter(([k]) => ['content-type', 'x-admin-key', 'x-manage-token'].includes(k.toLowerCase())));
+      const upstream = await fetch(`${PROXY}${url.pathname}${url.search}`, { method: req.method, headers, body: body || undefined });
+      res.writeHead(upstream.status, { 'content-type': upstream.headers.get('content-type') ?? 'application/json' });
+      res.end(Buffer.from(await upstream.arrayBuffer()));
+      return;
+    }
     if (url.pathname.startsWith('/api/')) {
       const route = match(req.method, url.pathname);
       if (!route) { res.writeHead(404, { 'content-type': 'application/json' }).end('{"error":{"code":"not_found"}}'); return; }

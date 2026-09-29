@@ -24,3 +24,7 @@ Thumbs.db
 
 # Claude Code local settings (keep shared skills, drop personal settings)
 .claude/settings.local.json
+
+# Deploy-time scratch files
+.otto-payload.json
+.otto-result.json

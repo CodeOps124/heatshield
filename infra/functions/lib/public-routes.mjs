@@ -49,8 +49,14 @@ export function createPublicApi({ weather, guidance, version, region, agentsApi 
         return json(429, { error: { code: 'cooldown', message: `Someone asked ${agentId === 'sol' ? 'Sol' : 'Otto'} ${Math.floor(since / 1000)} s ago. Try again in ${retryAfterSec} s.` }, retryAfterSec });
       }
       await agentLog.putState('ondemand', agentId, { requestedAt: new Date(now()).toISOString() });
-      const result = await runAgentNow(agentId);
-      return json(200, { agent: agentId, result });
+      try {
+        const result = await runAgentNow(agentId);
+        return json(200, { agent: agentId, result });
+      } catch (err) {
+        // A failed run should not burn the cooldown, and the visitor deserves the real reason.
+        await (last ? agentLog.putState('ondemand', agentId, { requestedAt: last.requestedAt }) : agentLog.deleteState('ondemand', agentId)).catch(() => {});
+        return json(502, { error: { code: 'agent_failed', message: `${agentId === 'sol' ? 'Sol' : 'Otto'} could not finish: ${err.message}` } });
+      }
     },
 
     'GET /api/health': async () =>

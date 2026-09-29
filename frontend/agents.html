@@ -1,0 +1,90 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Agent HQ · HeatShield</title>
+  <meta name="description" content="Six AI agents run HeatShield around the clock on AWS. Watch them work live, and give them a task.">
+  <link rel="icon" href="/favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="/css/styles.css">
+  <script src="/js/theme.js"></script>
+  <script type="module" src="/js/agents-page.js"></script>
+</head>
+<body>
+  <a class="skip-link" href="#main">Skip to content</a>
+  <header class="site-header">
+    <div class="wrap">
+      <a class="brand" href="/" aria-label="HeatShield home">
+        <svg viewBox="0 0 32 32" aria-hidden="true"><path d="M16 2.5l11 4v8.3c0 6.6-4.6 11.5-11 13.2C9.6 26.3 5 21.4 5 14.8V6.5z" fill="#eb6834"/><path d="M16 9v8.2" stroke="#fff" stroke-width="2.6" stroke-linecap="round"/><circle cx="16" cy="21" r="2.4" fill="#fff"/></svg>
+        HeatShield
+      </a>
+      <nav class="nav" aria-label="Main">
+        <a href="/#check">Check risk</a>
+        <a href="/agents.html" aria-current="page">Agent HQ</a>
+        <button class="theme-toggle" id="theme-toggle" type="button" aria-label="Toggle theme"></button>
+      </nav>
+    </div>
+  </header>
+
+  <main id="main" class="wrap section">
+    <p class="eyebrow-line"><span class="live-dot" aria-hidden="true"></span> Live from AWS</p>
+    <h1>Agent HQ</h1>
+    <p class="lede section-sub">Six AI agents run HeatShield around the clock. Each one owns a real job, uses a real algorithm for the part that must be exact, and uses a model on Amazon Bedrock for the part that needs judgment. Everything you see here comes from their actual runs.</p>
+    <p class="hq-status" id="hq-status" aria-live="polite">Connecting to the agents…</p>
+
+    <div class="hq-controls" role="group" aria-label="Give the agents work">
+      <button class="btn" id="task-btn" type="button">Give the team a task</button>
+      <button class="btn secondary" id="sol-btn" type="button">Ask Sol to rescan</button>
+      <button class="btn secondary" id="kai-btn" type="button">Ask Kai to re-plan the demo group</button>
+      <button class="btn secondary" id="otto-btn" type="button">Ask Otto to check the site</button>
+    </div>
+    <p class="hint">Each button runs a real agent on AWS. Shared cooldowns keep the cost capped however many people click.</p>
+
+    <div class="card office-card">
+      <div id="office"></div>
+      <div class="office-legend" aria-hidden="true">
+        <span><i class="lamp working"></i>working</span>
+        <span><i class="lamp idle"></i>ready</span>
+        <span><i class="lamp error"></i>error</span>
+        <span><i class="dot watch"></i>heat watch</span>
+        <span><i class="dot warning"></i>warning</span>
+        <span><i class="dot emergency"></i>emergency</span>
+        <span>Wall board: areas Sol is watching, from the live forecast.</span>
+      </div>
+    </div>
+
+    <div class="card mt-16" id="task-result" hidden></div>
+
+    <div class="hq-grid mt-16">
+      <section class="card" aria-labelledby="feed-title">
+        <h2 id="feed-title">Live activity</h2>
+        <p class="hint">Every agent run, newest first, straight from the agent log in DynamoDB.</p>
+        <ol class="feed" id="feed"></ol>
+      </section>
+      <section class="card" aria-labelledby="agent-title" id="agent-panel">
+        <h2 id="agent-title">Choose an agent</h2>
+        <p class="hint">Select a desk in the office to see what that agent does and what it did last.</p>
+      </section>
+    </div>
+
+    <section class="section" aria-labelledby="how-agents">
+      <h2 id="how-agents" class="section-title">How the agents work together</h2>
+      <ol class="steps">
+        <li><span class="n">Every hour · Sol</span><h3>Finds heatwaves</h3><p>Compares the next days with each area's own 1991–2020 climate (Excess Heat Factor) and the heat index, then briefs the team. The algorithm caps how severe Sol may call an event.</p></li>
+        <li><span class="n">Every plan · Mira</span><h3>Writes the advice</h3><p>Retrieves only the relevant vetted CDC/NIOSH facts (BM25) and writes a plan in the person's language.</p></li>
+        <li><span class="n">Every plan · Lexi + Vera</span><h3>Check it before anyone sees it</h3><p>Lexi verifies the language (naive-Bayes language ID, back-translation); Vera checks safety (rule detectors, rubric). Blocking issues go back to Mira.</p></li>
+        <li><span class="n">Every 3 hours · Kai</span><h3>Plans check-ins</h3><p>Scores urgency and schedules who a group leader should contact first, earliest deadline first, across time zones.</p></li>
+        <li><span class="n">Every 15 minutes · Otto</span><h3>Keeps it up</h3><p>Probes the live site and the weather provider, runs control charts on latency, checks every agent's heartbeat, and writes incident reports.</p></li>
+      </ol>
+      <p class="hint mt-16">Models: Amazon Nova 2 Lite for Sol, Kai, Otto and (until Anthropic access is enabled on this account) Mira; Amazon Nova Pro for the reviewers, so a different model checks the writer's work. Names like "Sol" are roles, not people; the agents give safety information, not medical care.</p>
+    </section>
+  </main>
+
+  <footer class="site-footer">
+    <div class="wrap">
+      <p>Agent runs are recorded in Amazon DynamoDB and shown here without personal data: places are cities, and group plans never leave the leader's private dashboard.</p>
+      <p class="version" id="version"></p>
+    </div>
+  </footer>
+</body>
+</html>
