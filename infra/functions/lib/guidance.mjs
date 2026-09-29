@@ -223,40 +223,55 @@ export function createGuidanceService({
   async function write(input, facts, deadline, feedback) {
     let lastErr;
     for (const modelId of models.filter(Boolean)) {
-      const started = nowMs();
-      try {
-        const timeout = Math.min(MODEL_TIMEOUT_MS, deadline - nowMs());
-        if (timeout < 1500) throw new Error('No time left to write guidance');
-        const res = await converse(
-          {
-            modelId,
-            system: [{ text: buildSystemPrompt(LANGUAGES[input.language].name, facts) }],
-            messages: [{ role: 'user', content: [{ text: buildUserPrompt(input, feedback) }] }],
-            inferenceConfig: { maxTokens: 1000, temperature: 0.3 },
-          },
-          { abortSignal: AbortSignal.timeout(timeout) },
-        );
-        if (res.stopReason === 'max_tokens') throw new Error('Model output was truncated');
-        const text = (res.output?.message?.content ?? []).map((c) => c.text ?? '').join('');
-        const guidance = parseGuidance(text, input.language);
-        const latencyMs = nowMs() - started;
-        log.info('bedrock_guidance_generated', {
-          modelId, language: input.language, latencyMs, inputTokens: res.usage?.inputTokens, outputTokens: res.usage?.outputTokens, revision: Boolean(feedback),
-        });
-        await record('mira', {
-          trigger: feedback ? 'revision' : 'new-plan',
-          outcome: 'ok',
-          durationMs: latencyMs,
-          model: modelId,
-          inputTokens: res.usage?.inputTokens ?? 0,
-          outputTokens: res.usage?.outputTokens ?? 0,
-          summary: `${feedback ? 'Revised' : 'Wrote'} ${/^[AEIOU]/.test(LANGUAGES[input.language].name) ? 'an' : 'a'} ${LANGUAGES[input.language].name} plan for ${PROFILE_DESCRIPTIONS[input.profileId].split(' (')[0]} (${TIER_LABELS[input.next12hTier]}).`,
-          detail: { language: input.language, profile: input.profileId, factsUsed: facts.map((f) => f.id), headline: guidance.headline },
-        });
-        return { guidance, model: modelId };
-      } catch (err) {
-        lastErr = err;
-        log.warn('bedrock_guidance_failed', { modelId, error: err.name, message: err.message });
+      // A model that answers with unusable text (a runaway reply cut off at the token limit, or broken
+      // JSON) gets one more sample: seen live in Swahili. Errors such as "model not enabled" or a
+      // timeout move straight on to the next model.
+      for (let attempt = 1; attempt <= 2; attempt += 1) {
+        const started = nowMs();
+        try {
+          const timeout = Math.min(MODEL_TIMEOUT_MS, deadline - nowMs());
+          if (timeout < 1500) throw new Error('No time left to write guidance');
+          const res = await converse(
+            {
+              modelId,
+              system: [{ text: buildSystemPrompt(LANGUAGES[input.language].name, facts) }],
+              messages: [{ role: 'user', content: [{ text: buildUserPrompt(input, feedback) }] }],
+              inferenceConfig: { maxTokens: 1500, temperature: 0.3 },
+            },
+            { abortSignal: AbortSignal.timeout(timeout) },
+          );
+          let guidance;
+          try {
+            if (res.stopReason === 'max_tokens') throw new Error('Model output was truncated');
+            guidance = parseGuidance((res.output?.message?.content ?? []).map((c) => c.text ?? '').join(''), input.language);
+          } catch (err) {
+            err.unusable = true;
+            throw err;
+          }
+          const latencyMs = nowMs() - started;
+          log.info('bedrock_guidance_generated', {
+            modelId, language: input.language, latencyMs, inputTokens: res.usage?.inputTokens, outputTokens: res.usage?.outputTokens, revision: Boolean(feedback), attempt,
+          });
+          await record('mira', {
+            trigger: feedback ? 'revision' : 'new-plan',
+            outcome: 'ok',
+            durationMs: latencyMs,
+            model: modelId,
+            inputTokens: res.usage?.inputTokens ?? 0,
+            outputTokens: res.usage?.outputTokens ?? 0,
+            summary: `${feedback ? 'Revised' : 'Wrote'} ${/^[AEIOU]/.test(LANGUAGES[input.language].name) ? 'an' : 'a'} ${LANGUAGES[input.language].name} plan for ${PROFILE_DESCRIPTIONS[input.profileId].split(' (')[0]} (${TIER_LABELS[input.next12hTier]}).`,
+            detail: { language: input.language, profile: input.profileId, factsUsed: facts.map((f) => f.id), headline: guidance.headline },
+          });
+          return { guidance, model: modelId };
+        } catch (err) {
+          lastErr = err;
+          if (err.unusable && attempt === 1) {
+            log.warn('bedrock_guidance_resample', { modelId, language: input.language, message: err.message });
+            continue;
+          }
+          log.warn('bedrock_guidance_failed', { modelId, error: err.name, message: err.message });
+          break;
+        }
       }
     }
     throw lastErr ?? new Error('No writer model available');

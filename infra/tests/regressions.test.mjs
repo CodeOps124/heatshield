@@ -326,6 +326,28 @@ test('Otto 11:36 UTC: a model that is not enabled on the account is a setup note
   assert.equal(bad.outcome, 'degraded-reported');
 });
 
+test('Mira 11:55 UTC: a runaway Swahili reply hit the token limit; the writer now takes one more sample before giving up', async () => {
+  const calls = [];
+  const replies = [
+    { stopReason: 'max_tokens', output: { message: { role: 'assistant', content: [{ text: '{"headline":"Joto kali leo. Joto kali leo. Joto kali leo.' }] } }, usage: { inputTokens: 10, outputTokens: 1500 } },
+    text(JSON.stringify(GOOD)),
+  ];
+  const svc = createGuidanceService({ converse: async (p) => { calls.push(p.modelId); return replies.shift(); }, cache: memCache(), models: ['nova'], log: silentLog });
+  const g = await svc.getGuidance(assessRisk(hot(), 'general'), 'en');
+  assert.equal(g.source, 'bedrock');
+  assert.deepEqual(calls, ['nova', 'nova']);
+
+  // "Not enabled" is not retried on the same model: it moves on to the next one.
+  const seen = [];
+  const denied = Object.assign(new Error('Model use case details have not been submitted'), { name: 'ResourceNotFoundException' });
+  const svc2 = createGuidanceService({
+    converse: async (p) => { seen.push(p.modelId); if (p.modelId === 'claude') throw denied; return text(JSON.stringify(GOOD)); },
+    cache: memCache(), models: ['claude', 'nova'], log: silentLog,
+  });
+  assert.equal((await svc2.getGuidance(assessRisk(hot(), 'general'), 'en')).source, 'bedrock');
+  assert.deepEqual(seen, ['claude', 'nova']);
+});
+
 test('Kai: empty groups (left by end-to-end tests) are skipped, not counted as planned', async () => {
   const { db, tables } = createFakeDb();
   const store = createStore({ db, tables });
