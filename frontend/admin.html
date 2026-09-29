@@ -1,0 +1,132 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Admin console · HeatShield</title>
+  <meta name="robots" content="noindex">
+  <link rel="icon" href="/favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="/css/styles.css">
+  <script src="/js/theme.js"></script>
+  <script type="module" src="/js/admin.js"></script>
+</head>
+<body>
+  <a class="skip-link" href="#main">Skip to content</a>
+  <header class="site-header">
+    <div class="wrap">
+      <a class="brand" href="/" aria-label="HeatShield home">
+        <svg viewBox="0 0 32 32" aria-hidden="true"><path d="M16 2.5l11 4v8.3c0 6.6-4.6 11.5-11 13.2C9.6 26.3 5 21.4 5 14.8V6.5z" fill="#eb6834"/><path d="M16 9v8.2" stroke="#fff" stroke-width="2.6" stroke-linecap="round"/><circle cx="16" cy="21" r="2.4" fill="#fff"/></svg>
+        HeatShield
+      </a>
+      <nav class="nav" aria-label="Main">
+        <a href="/agents.html">Agent HQ</a>
+        <button class="theme-toggle" id="theme-toggle" type="button" aria-label="Toggle theme"></button>
+      </nav>
+    </div>
+  </header>
+
+  <main id="main" class="wrap section">
+    <h1>Admin console</h1>
+    <p class="lede section-sub">Operate HeatShield: pause agents, cap the daily AI spend, post a heat notice on every page, recall a plan, and see what the system did. Every change is recorded in the audit log.</p>
+    <div id="admin-status" aria-live="polite"></div>
+
+    <section class="card" id="signin" hidden>
+      <h2>Operators only</h2>
+      <p>Sign in with your HeatShield administrator account (Amazon Cognito). There is no public sign-up.</p>
+      <button class="btn" id="signin-btn" type="button">Sign in</button>
+    </section>
+
+    <div id="console" hidden>
+      <div class="admin-bar">
+        <p class="hint" id="whoami"></p>
+        <div class="admin-bar-actions">
+          <button class="btn secondary small" id="refresh-btn" type="button">Refresh</button>
+          <button class="btn secondary small" id="signout-btn" type="button">Sign out</button>
+        </div>
+      </div>
+
+      <section class="card mt-16" aria-labelledby="status-title">
+        <h2 id="status-title">System</h2>
+        <div class="summary-tiles mt-16" id="status-tiles"></div>
+        <div id="alarms" class="mt-16"></div>
+        <div id="failed-runs" class="mt-16"></div>
+      </section>
+
+      <div class="grid-2 mt-16">
+        <section class="card" aria-labelledby="budget-title">
+          <h2 id="budget-title">AI budget</h2>
+          <div id="budget"></div>
+        </section>
+        <section class="card" aria-labelledby="notice-title">
+          <h2 id="notice-title">Site notice</h2>
+          <p class="hint">Shown under the header on every page, for example a heat emergency or a cooling-centre announcement.</p>
+          <form id="notice-form" class="stack" novalidate>
+            <div>
+              <label for="notice-text">Message</label>
+              <textarea id="notice-text" maxlength="280" rows="3" placeholder="e.g. Extreme heat in Karachi until Friday. Cooling centres are open at all public libraries."></textarea>
+            </div>
+            <div class="admin-row">
+              <div>
+                <label for="notice-level">Level</label>
+                <select id="notice-level">
+                  <option value="info">Notice</option>
+                  <option value="warning">Heat warning</option>
+                  <option value="danger">Heat emergency</option>
+                </select>
+              </div>
+              <div>
+                <label for="notice-hours">Show for</label>
+                <select id="notice-hours">
+                  <option value="6">6 hours</option>
+                  <option value="24" selected>24 hours</option>
+                  <option value="72">3 days</option>
+                  <option value="0">Until I clear it</option>
+                </select>
+              </div>
+            </div>
+            <div class="admin-bar-actions">
+              <button class="btn small" type="submit">Publish</button>
+              <button class="btn secondary small" id="notice-clear" type="button">Clear</button>
+            </div>
+          </form>
+          <div id="notice-current" class="mt-16"></div>
+        </section>
+      </div>
+
+      <section class="card mt-16" aria-labelledby="agents-admin-title">
+        <h2 id="agents-admin-title">Agents</h2>
+        <p class="hint">A paused agent skips its scheduled runs (and says so in Agent HQ). "Run now" works even when paused. The Dispatcher sends heat alerts and cannot be paused.</p>
+        <div class="table-scroll"><table class="data-table" id="agents-table">
+          <thead><tr><th scope="col">Agent</th><th scope="col">Status</th><th scope="col">Last run</th><th scope="col" class="num">Runs 24 h</th><th scope="col"><span class="visually-hidden">Actions</span></th></tr></thead>
+          <tbody></tbody>
+        </table></div>
+      </section>
+
+      <div class="grid-2 mt-16">
+        <section class="card" aria-labelledby="quality-title">
+          <h2 id="quality-title">Plan quality</h2>
+          <div id="quality"></div>
+        </section>
+        <section class="card" aria-labelledby="plans-title">
+          <h2 id="plans-title">Recent plans</h2>
+          <p class="hint">Recall removes an approved plan from the cache; the next person in that situation gets a freshly written and reviewed one.</p>
+          <ol class="plain-list admin-plans" id="plans"></ol>
+        </section>
+      </div>
+
+      <section class="card mt-16" aria-labelledby="audit-title">
+        <h2 id="audit-title">Audit log</h2>
+        <p class="hint">Every change made in this console, newest first (kept 90 days).</p>
+        <ol class="plain-list" id="audit"></ol>
+      </section>
+    </div>
+  </main>
+
+  <footer class="site-footer">
+    <div class="wrap">
+      <p>Admin sign-in by Amazon Cognito; every admin request is checked by an API Gateway JWT authorizer and recorded.</p>
+      <p class="version" id="version"></p>
+    </div>
+  </footer>
+</body>
+</html>

@@ -14,6 +14,7 @@ import {
 import { CloudWatchLogsClient, FilterLogEventsCommand, DescribeLogGroupsCommand } from '@aws-sdk/client-cloudwatch-logs';
 import { LambdaClient, InvokeCommand } from '@aws-sdk/client-lambda';
 import { SQSClient, GetQueueAttributesCommand, ReceiveMessageCommand, PurgeQueueCommand } from '@aws-sdk/client-sqs';
+import { CloudWatchClient, DescribeAlarmsCommand } from '@aws-sdk/client-cloudwatch';
 
 const doc = DynamoDBDocumentClient.from(new DynamoDBClient({}), {
   marshallOptions: { removeUndefinedValues: true },
@@ -279,3 +280,15 @@ export const failedRuns = {
     if (queueUrl()) await sqs.send(new PurgeQueueCommand({ QueueUrl: queueUrl() }));
   },
 };
+
+// ---------------------------------------------------------------- alarm states (admin console)
+const cloudwatch = new CloudWatchClient({});
+export async function alarmStates() {
+  const res = await cloudwatch.send(new DescribeAlarmsCommand({ AlarmNamePrefix: `${process.env.STACK_NAME}-`, MaxRecords: 50 }));
+  return (res.MetricAlarms ?? []).map((a) => ({
+    name: a.AlarmName.replace(`${process.env.STACK_NAME}-`, ''),
+    state: a.StateValue,
+    description: a.AlarmDescription ?? '',
+    since: a.StateUpdatedTimestamp ? new Date(a.StateUpdatedTimestamp).toISOString() : null,
+  }));
+}

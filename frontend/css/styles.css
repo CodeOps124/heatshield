@@ -137,7 +137,7 @@ p { margin: 0 0 0.9rem; }
 @media (min-width: 720px) { .form-grid.cols-2 { grid-template-columns: 1fr 1fr; } }
 label, .label { display: block; font-weight: 600; font-size: 0.92rem; margin-bottom: 6px; }
 .hint { color: var(--muted); font-size: 0.85rem; font-weight: 400; }
-input[type="text"], input[type="email"], input[type="search"], select {
+input[type="text"], input[type="email"], input[type="search"], input[type="number"], select, textarea {
   width: 100%; font: inherit; color: var(--ink); background: var(--page);
   border: 1px solid var(--border-strong); border-radius: var(--radius-sm); padding: 10px 12px; min-height: 44px;
 }
@@ -440,3 +440,24 @@ details.table-view summary { cursor: pointer; color: var(--link); font-size: 0.9
 }
 .checkin-action { margin: 6px 0 2px; }
 .teaser-cta { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; justify-content: space-between; margin-top: 12px; }
+
+/* ---------------------------------------------------------------- admin console */
+textarea { resize: vertical; min-height: 88px; }
+.admin-bar { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; justify-content: space-between; }
+.admin-bar-actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.admin-row { display: grid; gap: 12px; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); align-items: end; margin-top: 12px; }
+.admin-big { font-size: 1.6rem; font-weight: 700; margin: 4px 0 8px; font-variant-numeric: tabular-nums; }
+.stat.warn { border-color: var(--warning); }
+.pill.alarm { border-color: var(--critical); color: var(--critical); font-weight: 650; }
+.meter { height: 10px; border-radius: 999px; background: var(--surface-2); overflow: hidden; }
+.meter-fill { height: 100%; border-radius: 999px; background: var(--series-1); }
+.meter-fill.tripped { background: var(--critical); }
+/* 7-day spend: one series, bars anchored to the baseline with rounded data-ends and 2px gaps. */
+.bars { display: grid; grid-template-columns: repeat(7, 1fr); gap: 2px; align-items: end; height: 120px; margin-top: 8px; border-bottom: 1px solid var(--border); }
+.bar { position: relative; height: 100%; display: flex; align-items: flex-end; justify-content: center; }
+.bar-fill { display: block; width: 70%; max-width: 36px; background: var(--series-1); border-radius: 4px 4px 0 0; }
+.bar:hover .bar-fill { filter: brightness(1.15); }
+.bar-label { position: absolute; bottom: -20px; font-size: 0.75rem; color: var(--muted); }
+.bars + details { margin-top: 28px; }
+.admin-preview { border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 10px 12px; }
+.admin-plans li { padding: 8px 0; border-top: 1px solid var(--border); }

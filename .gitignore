@@ -15,6 +15,7 @@ npm-debug.log*
 # Deploy-time outputs that contain per-account values
 .deploy-outputs.json
 frontend/version.json
+frontend/admin-config.json
 
 # OS / editor
 .DS_Store

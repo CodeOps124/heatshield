@@ -80,6 +80,10 @@ if (!args.has('--site-only')) {
 const outputs = stackOutputs();
 writeFileSync(join(ROOT, '.deploy-outputs.json'), `${JSON.stringify({ ...outputs, version, deployedAt: new Date().toISOString() }, null, 2)}\n`);
 writeFileSync(join(ROOT, 'frontend', 'version.json'), `${JSON.stringify({ version, builtAt: new Date().toISOString() })}\n`);
+// Public sign-in settings for the admin console (a client ID and a domain; neither is a secret).
+if (outputs.AdminClientId) {
+  writeFileSync(join(ROOT, 'frontend', 'admin-config.json'), `${JSON.stringify({ region: cfg.region, clientId: outputs.AdminClientId, authDomain: outputs.AdminAuthDomain })}\n`);
+}
 
 const bucket = `s3://${outputs.SiteBucketName}`;
 // Short cache lifetimes (no hashed filenames) + a CloudFront invalidation on every deploy.

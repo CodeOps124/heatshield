@@ -49,9 +49,15 @@ Parameters:
       The CloudFront domain of this stack (set automatically by scripts/deploy.mjs after the first
       deploy). Passed in rather than referenced so the admin sign-in and the agents can use it
       without a CloudFormation dependency cycle.
+  AdminAuthDomainPrefix:
+    Type: String
+    Default: heatshield-ops-k3v9x
+    AllowedPattern: '^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$'
+    Description: Prefix of the Amazon Cognito sign-in domain for the admin console (must be unique in the region).
 
 Conditions:
   HasFallbackModel: !Not [!Equals [!Ref BedrockFallbackModelId, '']]
+  HasSiteDomain: !Not [!Equals [!Ref SiteDomain, '']]
 
 Globals:
   Function:
@@ -129,6 +135,67 @@ Resources:
       MessageRetentionPeriod: 1209600 # 14 days
       SqsManagedSseEnabled: true
 
+  # ------------------------------------------------------------------ admin sign-in (Amazon Cognito)
+  # Operators only: nobody can sign up; an administrator account is created with an email invite.
+  # Public app client (no secret), authorization code + PKCE; API Gateway checks the JWT.
+  AdminUserPool:
+    Type: AWS::Cognito::UserPool
+    Properties:
+      UserPoolName: !Sub ${AWS::StackName}-admins
+      UserPoolTier: LITE
+      UsernameAttributes: [email]
+      AutoVerifiedAttributes: [email]
+      AdminCreateUserConfig:
+        AllowAdminCreateUserOnly: true
+        InviteMessageTemplate:
+          EmailSubject: Your HeatShield admin account
+          EmailMessage: 'You have been added as a HeatShield administrator. Open the admin console, sign in as {username} with the temporary password {####}, and choose your own password.'
+      Policies:
+        PasswordPolicy:
+          MinimumLength: 12
+          RequireLowercase: true
+          RequireUppercase: true
+          RequireNumbers: true
+          RequireSymbols: true
+          TemporaryPasswordValidityDays: 7
+      AccountRecoverySetting:
+        RecoveryMechanisms: [{ Name: verified_email, Priority: 1 }]
+      MfaConfiguration: 'OFF'
+
+  AdminUserPoolDomain:
+    Type: AWS::Cognito::UserPoolDomain
+    Properties:
+      Domain: !Ref AdminAuthDomainPrefix
+      UserPoolId: !Ref AdminUserPool
+      ManagedLoginVersion: 1 # classic hosted sign-in page (no branding resource needed)
+
+  AdminUserPoolClient:
+    Type: AWS::Cognito::UserPoolClient
+    Properties:
+      UserPoolId: !Ref AdminUserPool
+      ClientName: admin-console
+      GenerateSecret: false
+      AllowedOAuthFlowsUserPoolClient: true
+      AllowedOAuthFlows: [code]
+      AllowedOAuthScopes: [openid, email]
+      SupportedIdentityProviders: [COGNITO]
+      CallbackURLs: [!If [HasSiteDomain, !Sub 'https://${SiteDomain}/admin.html', 'http://localhost:8787/admin.html']]
+      LogoutURLs: [!If [HasSiteDomain, !Sub 'https://${SiteDomain}/admin.html', 'http://localhost:8787/admin.html']]
+      ExplicitAuthFlows: [ALLOW_REFRESH_TOKEN_AUTH]
+      PreventUserExistenceErrors: ENABLED
+      EnableTokenRevocation: true
+      AccessTokenValidity: 60
+      IdTokenValidity: 60
+      RefreshTokenValidity: 60
+      TokenValidityUnits: { AccessToken: minutes, IdToken: minutes, RefreshToken: minutes }
+
+  AdminGroup:
+    Type: AWS::Cognito::UserPoolGroup
+    Properties:
+      GroupName: admins
+      UserPoolId: !Ref AdminUserPool
+      Description: HeatShield operators (admin console)
+
   # ------------------------------------------------------------------ data
   GroupsTable:
     Type: AWS::DynamoDB::Table
@@ -191,6 +258,13 @@ Resources:
   HttpApi:
     Type: AWS::Serverless::HttpApi
     Properties:
+      Auth:
+        Authorizers:
+          AdminJwt: # only the admin routes use it; public routes stay anonymous
+            IdentitySource: $request.header.Authorization
+            JwtConfiguration:
+              issuer: !Sub https://cognito-idp.${AWS::Region}.amazonaws.com/${AdminUserPool}
+              audience: [!Ref AdminUserPoolClient]
       DefaultRouteSettings: # per-route throttle: caps abuse (and Bedrock spend) on a public endpoint
         ThrottlingBurstLimit: 20
         ThrottlingRateLimit: 10
@@ -276,6 +350,51 @@ Resources:
         DeleteLocation: { Type: HttpApi, Properties: { ApiId: !Ref HttpApi, Method: DELETE, Path: '/api/locations/{locationId}' } }
         RequestPlan: { Type: HttpApi, Properties: { ApiId: !Ref HttpApi, Method: POST, Path: '/api/groups/{groupId}/plan' } }
         DeleteGroup: { Type: HttpApi, Properties: { ApiId: !Ref HttpApi, Method: DELETE, Path: '/api/groups/{groupId}' } }
+
+  AdminApiFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      Description: Admin console API (Amazon Cognito sign-in) - pauses, AI budget, site notice, run agents, recall plans, audit
+      Handler: handlers/admin-api.handler
+      Timeout: 28
+      Environment:
+        Variables:
+          STACK_NAME: !Ref AWS::StackName
+          FAILED_RUNS_QUEUE_URL: !Ref FailedRunsQueue
+      Policies:
+        - DynamoDBCrudPolicy: { TableName: !Ref AgentLogTable }
+        - DynamoDBCrudPolicy: { TableName: !Ref GuidanceCacheTable } # recall a cached plan
+        - Statement:
+            - Sid: FindStackFunctions
+              Effect: Allow
+              Action: logs:DescribeLogGroups
+              Resource: !Sub arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:*
+            - Sid: RunAgents # matched by this stack's name prefix (no template references: no cycle)
+              Effect: Allow
+              Action: lambda:InvokeFunction
+              Resource: !Sub arn:${AWS::Partition}:lambda:${AWS::Region}:${AWS::AccountId}:function:${AWS::StackName}-*
+            - Sid: FailedRuns
+              Effect: Allow
+              Action: [sqs:GetQueueAttributes, sqs:ReceiveMessage, sqs:PurgeQueue]
+              Resource: !GetAtt FailedRunsQueue.Arn
+            - Sid: AlarmStates
+              Effect: Allow
+              Action: cloudwatch:DescribeAlarms
+              Resource: !Sub arn:${AWS::Partition}:cloudwatch:${AWS::Region}:${AWS::AccountId}:alarm:${AWS::StackName}-*
+      Events:
+        Overview: { Type: HttpApi, Properties: { ApiId: !Ref HttpApi, Method: GET, Path: /api/admin/overview, Auth: { Authorizer: AdminJwt } } }
+        Settings: { Type: HttpApi, Properties: { ApiId: !Ref HttpApi, Method: PUT, Path: /api/admin/settings, Auth: { Authorizer: AdminJwt } } }
+        RunAgent: { Type: HttpApi, Properties: { ApiId: !Ref HttpApi, Method: POST, Path: '/api/admin/agents/{agentId}/run', Auth: { Authorizer: AdminJwt } } }
+        Plans: { Type: HttpApi, Properties: { ApiId: !Ref HttpApi, Method: GET, Path: /api/admin/plans, Auth: { Authorizer: AdminJwt } } }
+        RecallPlan: { Type: HttpApi, Properties: { ApiId: !Ref HttpApi, Method: DELETE, Path: '/api/admin/plans/{cacheKey}', Auth: { Authorizer: AdminJwt } } }
+        FailedRuns: { Type: HttpApi, Properties: { ApiId: !Ref HttpApi, Method: GET, Path: /api/admin/failed-runs, Auth: { Authorizer: AdminJwt } } }
+        ClearFailedRuns: { Type: HttpApi, Properties: { ApiId: !Ref HttpApi, Method: DELETE, Path: /api/admin/failed-runs, Auth: { Authorizer: AdminJwt } } }
+
+  AdminApiLogs:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub /aws/lambda/${AdminApiFunction}
+      RetentionInDays: 14
 
   AlertCheckFunction:
     Type: AWS::Serverless::Function
@@ -568,6 +687,23 @@ Resources:
       AlarmActions: [!Ref OpsTopic]
       OKActions: [!Ref OpsTopic]
 
+  AdminApiErrorsAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub ${AWS::StackName}-admin-api-errors
+      AlarmDescription: 'The admin console API function crashed or timed out.'
+      Namespace: AWS/Lambda
+      MetricName: Errors
+      Dimensions: [{ Name: FunctionName, Value: !Ref AdminApiFunction }]
+      Statistic: Sum
+      Period: 300
+      EvaluationPeriods: 1
+      Threshold: 1
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      TreatMissingData: notBreaching
+      AlarmActions: [!Ref OpsTopic]
+      OKActions: [!Ref OpsTopic]
+
   # ------------------------------------------------------------------ frontend
   SiteBucket:
     Type: AWS::S3::Bucket
@@ -621,7 +757,8 @@ Resources:
         Name: !Sub ${AWS::StackName}-security-headers
         SecurityHeadersConfig:
           ContentSecurityPolicy:
-            ContentSecurityPolicy: "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; font-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'; upgrade-insecure-requests"
+            # connect-src also allows the Cognito token endpoint (the admin page's sign-in code exchange).
+            ContentSecurityPolicy: !Sub "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self' https://${AdminAuthDomainPrefix}.auth.${AWS::Region}.amazoncognito.com; font-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'; upgrade-insecure-requests"
             Override: true
           ContentTypeOptions: { Override: true }
           FrameOptions: { FrameOption: DENY, Override: true }
@@ -695,3 +832,9 @@ Outputs:
     Value: !Ref OpsTopic
   FailedRunsQueueUrl:
     Value: !Ref FailedRunsQueue
+  AdminUserPoolId:
+    Value: !Ref AdminUserPool
+  AdminClientId:
+    Value: !Ref AdminUserPoolClient
+  AdminAuthDomain:
+    Value: !Sub ${AdminAuthDomainPrefix}.auth.${AWS::Region}.amazoncognito.com

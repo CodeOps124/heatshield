@@ -115,6 +115,7 @@ export function createStore({ db, tables, nowSeconds = () => Math.floor(Date.now
     guidanceCache: {
       get: (cacheKey) => db.get({ table: tables.guidanceCache, key: { cacheKey } }),
       put: (entry) => db.put({ table: tables.guidanceCache, item: entry }),
+      delete: (cacheKey) => db.delete({ table: tables.guidanceCache, key: { cacheKey } }), // admin "recall"
     },
   };
 }
