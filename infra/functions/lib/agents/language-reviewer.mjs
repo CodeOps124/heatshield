@@ -18,6 +18,14 @@ import { LANGUAGES } from '../languages.mjs';
 
 const CATEGORIES = new Set(['word', 'grammar', 'language', 'fact', 'style']);
 const BLOCKING = new Set(['word', 'grammar', 'language']);
+// Third calibration (three live evaluations, 50 plans, 29 Sep): the model still filed wording
+// complaints ("awkward", "not idiomatic", "should use the standard term for the level") as word or
+// grammar errors. None of those mislead a reader, so code keeps them as notes unless the problem
+// names a real error (not a real word, a misspelling, a typo, the wrong meaning).
+const REAL_ERROR = /not a real|not an? (?:actual|existing)|misspel|typo|invented|does not exist|wrong (?:word|meaning|language)|means\b/i;
+const WORDING_ONLY = /awkward|idiomatic|natural|phrasing|redundant|repeated|repetitive|unclear|standard term|correct term|official|level name|could be (?:clearer|simpler|simplified|improved)/i;
+export const isWordingOnly = (problem) => !REAL_ERROR.test(problem) && WORDING_ONLY.test(problem);
+
 const clean = (s, n) => (typeof s === 'string' ? s.replace(/\s+/g, ' ').trim().slice(0, n) : '');
 const allText = (g) => [g.headline, ...g.actions, g.seekHelp].join(' ');
 
@@ -29,11 +37,12 @@ export function parseLanguageReview(text) {
   const bt = raw.backTranslation;
   const issues = (Array.isArray(raw.issues) ? raw.issues : []).slice(0, 8).map((i) => {
     const category = CATEGORIES.has(i?.category) ? i.category : 'style';
+    const problem = clean(i?.problem, 300);
     return {
       quote: clean(i?.quote, 200),
       category,
-      severity: BLOCKING.has(category) ? 'blocking' : 'minor',
-      problem: clean(i?.problem, 300),
+      severity: BLOCKING.has(category) && !isWordingOnly(problem) ? 'blocking' : 'minor',
+      problem,
       fix: clean(i?.fix, 200),
     };
   }).filter((i) => i.problem);

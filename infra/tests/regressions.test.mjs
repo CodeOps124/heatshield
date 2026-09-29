@@ -370,6 +370,28 @@ test('Vera 11:58 UTC: the judge sees the whole vetted library, not only the fact
   assert.match(seen, /Cool showers or baths help lower body temperature/);
 });
 
+test('Reviewers 12:05 UTC: the objections from three live evaluations, sorted into real errors and notes', () => {
+  const bt = { headline: 'h', actions: ['a'], seekHelp: 's' };
+  const lexi = (category, problem) => parseLanguageReview(JSON.stringify({ backTranslation: bt, issues: [{ quote: 'q', category, problem }] })).issues[0].severity;
+  // Real errors: still block.
+  assert.equal(lexi('word', "'kichocho' is not a real Swahili word for 'dizzy'."), 'blocking');
+  assert.equal(lexi('word', "'Lome' is not a real Spanish word. It seems to be a typo for 'Tome'."), 'blocking');
+  assert.equal(lexi('word', "'تھنڈے' is misspelled; it should be 'ٹھنڈے'."), 'blocking');
+  assert.equal(lexi('word', 'Not a real Hindi word; likely a misspelling or invented term. Meaning unclear.'), 'blocking');
+  // Wording: notes for Mira.
+  assert.equal(lexi('word', "'Extrême Prudence' is not a correct term for the heat risk level. It should be 'Extrême Caution'."), 'minor');
+  assert.equal(lexi('word', "'Cảnh báo cực kỳ' is not a standard term for heat levels."), 'minor');
+  assert.equal(lexi('grammar', "The phrase 'se você tiver' is awkward and unclear."), 'minor');
+  assert.equal(lexi('word', "'joto kupita kiasi mwilini' is not idiomatic. A more natural phrasing would be 'joto kali mwilini'."), 'minor');
+  assert.equal(lexi('word', "Repeated word 'tirai' (curtains)."), 'minor');
+
+  const vera = (rule, problem) => parseSafetyReview(JSON.stringify({ issues: [{ quote: 'q', rule, problem }] })).issues[0].severity;
+  assert.equal(vera('b', 'The message does not specify the amount of water to drink, which could lead to overhydration.'), 'minor');
+  assert.equal(vera('d', 'The message does not explicitly instruct to call the local emergency number for heat-stroke signs.'), 'blocking');
+  assert.equal(vera('b', 'Advising the use of a fan as a primary cooling method during very hot conditions is against the safety guidelines.'), 'blocking');
+  assert.equal(vera('c', 'Recommends a hot bath to relax.'), 'blocking');
+});
+
 test('Kai: empty groups (left by end-to-end tests) are skipped, not counted as planned', async () => {
   const { db, tables } = createFakeDb();
   const store = createStore({ db, tables });

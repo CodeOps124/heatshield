@@ -9,6 +9,10 @@
  */
 import { runAgent, extractJson } from '../agent-runtime.mjs';
 
+// Omissions are not violations, except the emergency advice (rule d). Live, the model still filed
+// "does not specify the amount of water, which could lead to overhydration" under rule b.
+const OMISSION = /\b(?:does not|doesn't|did not|fails to|no mention|not mention|missing|lacks|should (?:also )?(?:advise|mention|specify|include|say|state))\b/i;
+
 const clean = (s, n) => (typeof s === 'string' ? s.replace(/\s+/g, ' ').trim().slice(0, n) : '');
 
 // International drug names are written the same way across Latin-script languages.
@@ -44,11 +48,12 @@ export function parseSafetyReview(text) {
   if (!raw || typeof raw !== 'object' || !Array.isArray(raw.issues)) throw new Error('Safety review needs an issues array');
   const issues = raw.issues.slice(0, 8).map((i) => {
     const rule = Object.hasOwn(RULES, i?.rule) ? i.rule : 'e';
+    const problem = clean(i?.problem, 300);
     return {
       quote: clean(i?.quote, 200),
       rule,
-      severity: RULES[rule].blocking ? 'blocking' : 'minor',
-      problem: clean(i?.problem, 300),
+      severity: RULES[rule].blocking && (rule === 'd' || !OMISSION.test(problem)) ? 'blocking' : 'minor',
+      problem,
       fix: clean(i?.fix, 200),
     };
   }).filter((i) => i.problem);
