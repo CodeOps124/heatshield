@@ -5,7 +5,7 @@ import { createAgentLog, recorded } from '../functions/lib/agent-log.mjs';
 import { createGuidanceService, retrieveFacts, buildGuidanceInput } from '../functions/lib/guidance.mjs';
 import { detectRuleViolations, createSafetyReviewer } from '../functions/lib/agents/safety-reviewer.mjs';
 import { createLanguageReviewer } from '../functions/lib/agents/language-reviewer.mjs';
-import { evidenceCeiling, parseSentinelOutput, runSentinel, buildAreas } from '../functions/lib/agents/sentinel.mjs';
+import { evidenceCeiling, parseSentinelOutput, runSentinel, buildAreas, findJargon } from '../functions/lib/agents/sentinel.mjs';
 import { buildCheckInSchedule, urgencyScore, parseCoordinatorOutput, runCoordinator } from '../functions/lib/agents/coordinator.mjs';
 import { triage, runWatchdog } from '../functions/lib/agents/watchdog.mjs';
 import { createAgentsApi } from '../functions/lib/agents-api.mjs';
@@ -163,10 +163,10 @@ test('Sol\'s evidence ceiling comes from the algorithm, and the model cannot exc
   assert.ok(!out.events.some((e) => e.areaId === 'ZZ'), 'unknown area ignored');
 });
 
-function sentinelWorld({ heatwave }) {
+function sentinelWorld({ heatwave, nowMs }) {
   const { db, tables } = createFakeDb();
   const store = createStore({ db, tables });
-  const agentLog = createAgentLog({ db, table: tables.agentLog });
+  const agentLog = createAgentLog({ db, table: tables.agentLog, nowMs });
   const dates = Array.from({ length: 38 }, (_, i) => new Date(Date.UTC(2026, 8, 1 + i)).toISOString().slice(0, 10));
   const today = dates[31];
   const weather = {
@@ -197,6 +197,35 @@ test('Sol: quiet weather needs no model call; a heatwave is investigated with to
   const r3 = await runSentinel({ ...w, converse: async () => { throw new Error('should not be called'); }, models: ['m'] });
   assert.equal(r3.outcome, 'unchanged');
   assert.equal(buildAreas([{ lat: 1, lon: 1, placeName: 'X', profile: 'child' }])[0].vulnerable, 1);
+});
+
+test('Sol: jargon gets one plain-language rewrite; the trend comes from the previous briefing, not the model', async () => {
+  assert.deepEqual(findJargon('Dubai shows new danger-tier heat indices with no excess heat factor severity.'), ['tier', 'excess heat factor']);
+  assert.deepEqual(findJargon('Dangerous heat and humidity in Dubai through Thursday.'), []);
+
+  let now = Date.parse('2026-09-29T04:05:00Z');
+  const w = sentinelWorld({ heatwave: true, nowMs: () => now });
+  await w.db.put({ table: 'locations', item: { locationId: 'l1', lat: -15.6, lon: -56.1, placeName: 'Cuiabá, Brazil', profile: 'elderly' } });
+  const prompts = [];
+  const answer = (briefing, trend) => text(JSON.stringify({ briefing, events: [{ areaId: 'A1', level: 'emergency', trend, headline: 'Extreme heat in Cuiabá' }] }));
+  let replies = [toolUse('list_heat_signals'), answer('Danger-tier heat indices and a high EHF in Cuiabá.', 'steady'), answer('Extreme heat in Cuiabá through Thursday.', 'steady')];
+  const converse = async (p) => { prompts.push(p.messages.at(-1).content[0].text ?? ''); return replies.shift(); };
+  const run = () => runSentinel({ ...w, converse, models: ['m'], nowMs: () => now, retryPauseMs: 0 });
+
+  const r1 = await run();
+  assert.equal(r1.outcome, 'briefed');
+  assert.match(prompts[2], /use jargon \(tier, ehf\)/);
+  let state = await w.agentLog.getState('sol', 'latest');
+  assert.equal(state.briefing, 'Extreme heat in Cuiabá through Thursday.');
+  assert.equal(state.events[0].trend, 'new', 'no previous briefing, whatever the model says');
+
+  // Seven hours later the same heatwave is briefed again; the model calls it new, the code knows better.
+  now += 7 * 3600_000;
+  replies = [answer('Extreme heat continues in Cuiabá.', 'new')];
+  assert.equal((await run()).outcome, 'briefed');
+  state = await w.agentLog.getState('sol', 'latest');
+  assert.equal(state.events[0].trend, 'steady');
+  assert.match(prompts.at(-1), /"previousLevel":"emergency"|previousLevel is what you called it/);
 });
 
 // ---------------------------------------------------------------- Kai

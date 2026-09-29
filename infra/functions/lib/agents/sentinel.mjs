@@ -86,6 +86,10 @@ export function buildAreas(locations) {
     }));
 }
 
+// Briefings are read by community health workers, not meteorologists.
+const JARGON = /\b(?:tiers?|EHF|excess heat factors?|evidence ceiling)\b/gi;
+export const findJargon = (text) => [...new Set((String(text).match(JARGON) ?? []).map((m) => m.toLowerCase()))];
+
 export function parseSentinelOutput(text, candidates) {
   const raw = extractJson(text);
   const byId = new Map(candidates.map((c) => [c.areaId, c]));
@@ -116,6 +120,8 @@ export function parseSentinelOutput(text, candidates) {
 
 const NEW_CLIMATES_PER_RUN = 3;
 const CARRY_MS = 3 * 3600_000;
+// Part of the fingerprint: changing how briefings are written triggers one fresh briefing.
+const BRIEFING_VERSION = 2;
 
 export async function runSentinel({ store, weather, climate, agentLog, converse, models, deadline = Date.now() + 240_000, nowMs = () => Date.now(), retryPauseMs = 20_000 }) {
   const areas = buildAreas(await store.listAllLocations());
@@ -203,7 +209,7 @@ export async function runSentinel({ store, weather, climate, agentLog, converse,
   // What would change the briefing: which areas are at which ceiling, their worst EHF day, and
   // whether that comes from this hour's data or from earlier data (so the text never goes stale).
   const fingerprint = createHash('sha1')
-    .update(JSON.stringify(areaSummary.filter((a) => a.ceiling).map((a) => [a.place, a.ceiling, a.ehfWorst?.date ?? null, a.ehfWorst?.severity ?? null, Boolean(a.stale)]).sort()))
+    .update(JSON.stringify([BRIEFING_VERSION, areaSummary.filter((a) => a.ceiling).map((a) => [a.place, a.ceiling, a.ehfWorst?.date ?? null, a.ehfWorst?.severity ?? null, Boolean(a.stale)]).sort()]))
     .digest('hex').slice(0, 12);
   // Age of the briefing itself: updatedAt moves on every re-check, so it could never expire one.
   const prevAge = prev?.briefedAt ? nowMs() - Date.parse(prev.briefedAt) : Infinity;
@@ -222,12 +228,20 @@ export async function runSentinel({ store, weather, climate, agentLog, converse,
     return { outcome: 'partial', summary: `${scanned}: no new heat signals; kept ${carriedEvents.length} earlier event(s).`, detail: { events: carriedEvents.map(({ place, level, trend }) => ({ place, level, trend })) } };
   }
 
+  // Trend is arithmetic, not judgment: each level compared with the previous briefing's.
+  const prevLevels = new Map((prev?.events ?? []).map((e) => [e.place, e.level]));
+  const trendOf = (place, level) => {
+    if (!prevLevels.has(place)) return 'new';
+    const d = LEVELS.indexOf(level) - LEVELS.indexOf(prevLevels.get(place));
+    return d > 0 ? 'escalating' : d < 0 ? 'easing' : 'steady';
+  };
   const signal = (c) => ({
     areaId: c.areaId, place: c.place, people: c.people, vulnerablePeople: c.vulnerable, outdoorWorkers: c.workers,
-    evidenceCeiling: c.ceiling,
+    evidenceCeiling: c.ceiling, previousLevel: prevLevels.get(c.place) ?? null,
     excessHeatFactor: c.ehf.climatePending ? 'not available yet (local climatology still being computed)' : c.ehf.days.map((d) => ({ date: d.date, ehf: d.ehf, severity: d.severity })),
     heatIndexByDay: c.hiDays, tmaxTrendCPerDay: c.tmaxTrendCPerDay, tropicalNightsAhead: c.tropicalNights,
   });
+  let plainWordsAsked = false;
   const run = await runAgent({
     agent: {
       name: 'sol',
@@ -255,10 +269,20 @@ export async function runSentinel({ store, weather, climate, agentLog, converse,
         },
       ],
     },
-    input: `It is ${new Date(nowMs()).toISOString()}. ${candidates.length} of ${assessed.length} watched areas show a heat signal. Investigate with your tools, then reply with ONLY this JSON:\n{"briefing":"3-5 plain-language sentences","events":[{"areaId":"A1","level":"watch|warning|emergency","trend":"new|escalating|steady|easing","headline":"one plain-language line","reason":"cite the evidence (EHF, tiers, dates)"}]}`,
+    input: `It is ${new Date(nowMs()).toISOString()}. ${candidates.length} of ${assessed.length} watched areas show a heat signal. Each area's previousLevel is what you called it in your previous briefing (null: it was not in it), so do not call an area new if it had one. Investigate with your tools, then reply with ONLY this JSON:\n{"briefing":"3-5 plain-language sentences","events":[{"areaId":"A1","level":"watch|warning|emergency","trend":"new|escalating|steady|easing","headline":"one plain-language line","reason":"cite the evidence (EHF, tiers, dates)"}]}`,
     converse,
     deadline,
-    validate: (text) => parseSentinelOutput(text, candidates),
+    repairs: 2,
+    validate: (text) => {
+      const out = parseSentinelOutput(text, candidates);
+      const jargon = findJargon([out.briefing, ...out.events.map((e) => e.headline)].join(' '));
+      if (jargon.length && !plainWordsAsked) {
+        // One rewrite for plain words; after that, the facts matter more than the wording.
+        plainWordsAsked = true;
+        throw new Error(`the briefing and headlines are for non-specialists but use jargon (${jargon.join(', ')}). Say "unusually hot for this place and time of year" instead of excess heat factor, and "dangerous heat and humidity" instead of a danger-tier heat index`);
+      }
+      return out;
+    },
   });
 
   const { events } = run.value;
@@ -266,7 +290,7 @@ export async function runSentinel({ store, weather, climate, agentLog, converse,
   const enriched = [
     ...events.map((e) => {
       const a = candidates.find((c) => c.areaId === e.areaId);
-      return { ...e, place: a.place, lat: a.lat, lon: a.lon, people: a.people, ehfWorst: a.ehf.worst, ceiling: a.ceiling };
+      return { ...e, trend: trendOf(a.place, e.level), place: a.place, lat: a.lat, lon: a.lon, people: a.people, ehfWorst: a.ehf.worst, ceiling: a.ceiling };
     }),
     ...carriedEvents,
   ];
