@@ -44,7 +44,7 @@ test('Sol 04:05 UTC: malformed JSON from the model gets one repair turn instead 
   }), /failed validation/);
 });
 
-test('Lexi 02:00 UTC: style notes never block; wrong words, grammar and false facts do', () => {
+test('Lexi 02:00 UTC: style notes never block; wrong words and grammar do', () => {
   const bt = { headline: 'h', actions: ['a'], seekHelp: 's' };
   const style = parseLanguageReview(JSON.stringify({ backTranslation: bt, verdict: 'revise', issues: [{ quote: 'Heat will rise', category: 'style', problem: 'Could say "heat risk"' }] }));
   assert.equal(style.verdict, 'approve', 'a model "revise" over style alone is overruled by code');
@@ -54,6 +54,20 @@ test('Lexi 02:00 UTC: style notes never block; wrong words, grammar and false fa
   const unknown = parseLanguageReview(JSON.stringify({ backTranslation: bt, issues: [{ category: 'vibes', problem: 'meh' }] }));
   assert.equal(unknown.issues[0].category, 'style');
   assert.throws(() => parseLanguageReview('{"issues":[]}'), /backTranslation/);
+});
+
+test('Lexi 11:40 UTC: 22 of 24 blocking issues were "fact" (today\'s peak read as the risk now); fact notes are now optional for Mira', () => {
+  const bt = { headline: 'h', actions: ['a'], seekHelp: 's' };
+  const r = parseLanguageReview(JSON.stringify({ backTranslation: bt, issues: [
+    { quote: 'گرمی میں شدید احتیاط', category: 'fact', problem: "The current heat risk is 'Caution', not 'Extreme Caution'." },
+    { quote: 'تھڑی', category: 'word', problem: 'Not a correct Urdu word; the word for midday is دوپہر.' },
+  ] }));
+  assert.equal(r.issues[0].category, 'fact');
+  assert.equal(r.issues[0].severity, 'minor', 'kept as a suggestion for Mira');
+  assert.equal(r.issues[1].severity, 'blocking');
+  assert.equal(r.verdict, 'revise', 'a wrong word still blocks');
+  const factOnly = parseLanguageReview(JSON.stringify({ backTranslation: bt, issues: [{ quote: 'x', category: 'fact', problem: 'Should say Danger, not high.' }] }));
+  assert.equal(factOnly.verdict, 'approve');
 });
 
 test('Vera 02:00 UTC: "a cup every 15 minutes" style variations pass; broken limits and missing emergency advice block', () => {

@@ -1,6 +1,6 @@
 // Agent HQ: live office + activity feed + agent details + buttons that run real agents.
 import { api, qs } from './api.js';
-import { el, clear, notice, initThemeToggle, showVersion, PROFILES, LANGUAGES, TIER_LABELS, modelName } from './ui.js';
+import { el, clear, notice, initThemeToggle, showVersion, PROFILES, LANGUAGES, TIER_LABELS, modelName, fallbackText } from './ui.js';
 import { mountOffice, AGENT_META } from './office-live.js';
 import { OFFICE_W } from './pixel-office.js';
 
@@ -343,7 +343,7 @@ $('task-btn').addEventListener('click', async (e) => {
     el('p', { class: 'hint' },
       g.source === 'cache' ? `Reused an approved plan (${secs}).`
         : g.source === 'bedrock' ? `Written by ${modelName(g.model)}, ${review.status === 'approved' ? 'approved by Lexi and Vera' : review.status}${review.revisions ? ` after ${review.revisions} revision(s)` : ''} · ${secs}`
-          : `Pre-written safety guidance (${g.fallbackReason ?? 'AI unavailable'}) · ${secs}`,
+          : `Pre-written safety guidance (${fallbackText(g.fallbackReason)}) · ${secs}`,
       ` · Heat now: ${TIER_LABELS[res.risk.current.tier]}`),
     el('div', { class: 'task-plan', lang: g.language, dir },
       el('p', { class: 'guidance-headline' }, g.headline),
