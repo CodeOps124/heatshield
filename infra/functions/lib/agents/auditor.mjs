@@ -4,8 +4,10 @@
  * heat index over the last 14 days are scored against the same model's own analysis
  * (algorithms/verification.mjs): mean error, bias, tier agreement, and Danger hits / misses /
  * false alarms. Sol receives the scores, so a briefing can say how far to trust the forecast.
- * Model: writes a short note for the team. Code rejects any note containing a number the
- * verification did not produce; after one retry, a code-written note is used instead.
+ * Model: decides which facts the team should hear about, as claims from a fixed list. Code checks
+ * every claim against the scores and writes the sentence; a claim the numbers do not support is
+ * dropped and counted. (The first version let the model write prose: it called Karachi's Danger
+ * record "perfect" when the forecast had missed 2 Danger days.)
  */
 import { runAgent, extractJson } from '../agent-runtime.mjs';
 import { verifyPeaks } from '../algorithms/verification.mjs';
@@ -14,49 +16,75 @@ import { mapLimit } from '../util.mjs';
 const clean = (s, n) => (typeof s === 'string' ? s.replace(/\s+/g, ' ').trim().slice(0, n) : '');
 const avg = (xs) => (xs.length ? Math.round((xs.reduce((a, b) => a + b, 0) / xs.length) * 10) / 10 : null);
 
-/** Every number the note may use: the scores themselves, as written (1 decimal, or whole percent). */
-export function allowedNumbers(report) {
-  const nums = new Set(['1', '3', String(report.windowDays)]);
-  const add = (x) => {
-    if (!Number.isFinite(x)) return;
-    nums.add(String(x));
-    nums.add(String(Math.abs(x)));
-    nums.add(x.toFixed(1));
-    nums.add(Math.abs(x).toFixed(1));
-  };
-  const addScore = (s) => {
-    if (!s) return;
-    add(s.maeC); add(s.biasC); add(s.days);
-    add(Math.round(s.tierAgreement * 100));
-  };
-  for (const c of report.cities) {
-    addScore(c.lead1); addScore(c.lead3);
-    for (const v of Object.values(c.danger)) add(v);
+const city = (c) => c.place.split(',')[0];
+const fmt = (x) => `${x > 0 ? '+' : ''}${x}`;
+
+/** The claims Quinn may make, each with the test the numbers must pass and the sentence code writes. */
+export const CLAIMS = {
+  ran_hot: {
+    holds: (c) => c.lead1.biasC >= 0.5 || (c.lead1.biasC >= 0 && (c.lead3?.biasC ?? 0) >= 0.5),
+    say: (c) => `${city(c)}: the forecast ran hot (${fmt(c.lead1.biasC)} °C one day ahead${c.lead3 ? `, ${fmt(c.lead3.biasC)} °C three days ahead` : ''}).`,
+  },
+  ran_cold: {
+    holds: (c) => c.lead1.biasC <= -0.5 || (c.lead1.biasC <= 0 && (c.lead3?.biasC ?? 0) <= -0.5),
+    say: (c) => `${city(c)}: the forecast ran cool (${fmt(c.lead1.biasC)} °C one day ahead${c.lead3 ? `, ${fmt(c.lead3.biasC)} °C three days ahead` : ''}).`,
+  },
+  missed_danger: {
+    holds: (c) => c.danger.misses > 0,
+    say: (c) => `${city(c)}: the day-ahead forecast missed ${c.danger.misses} Danger day(s).`,
+  },
+  false_alarms: {
+    holds: (c) => c.danger.falseAlarms > 0,
+    say: (c) => `${city(c)}: ${c.danger.falseAlarms} day-ahead Danger forecast(s) did not happen.`,
+  },
+  reliable_danger_calls: {
+    holds: (c) => c.danger.hits > 0 && c.danger.misses === 0 && c.danger.falseAlarms === 0,
+    say: (c) => `${city(c)}: every day-ahead Danger forecast was right (${c.danger.hits} of ${c.danger.hits}).`,
+  },
+  most_accurate: {
+    holds: (c, all) => all.length > 1 && c.lead1.maeC <= Math.min(...all.map((x) => x.lead1.maeC)) + 0.05,
+    say: (c) => `${city(c)}: the most accurate forecast (off by ${c.lead1.maeC} °C on average).`,
+  },
+  least_accurate: {
+    holds: (c, all) => all.length > 1 && c.lead1.maeC >= Math.max(...all.map((x) => x.lead1.maeC)) - 0.05,
+    say: (c) => `${city(c)}: the least accurate forecast (off by ${c.lead1.maeC} °C on average).`,
+  },
+};
+
+/** Keeps the model's claims that the numbers support; returns sentences and what was rejected. */
+export function verifyClaims(picked, report) {
+  const byName = new Map(report.cities.map((c) => [city(c).toLowerCase(), c]));
+  const accepted = [];
+  const rejected = [];
+  for (const p of picked.slice(0, 8)) {
+    const c = byName.get(String(p?.city ?? '').split(',')[0].trim().toLowerCase());
+    const claim = CLAIMS[p?.claim];
+    if (!c || !claim) { rejected.push({ city: p?.city ?? null, claim: p?.claim ?? null, why: 'unknown city or claim' }); continue; }
+    if (!claim.holds(c, report.cities)) { rejected.push({ city: city(c), claim: p.claim, why: 'not supported by the scores' }); continue; }
+    if (!accepted.some((a) => a.city === city(c) && a.claim === p.claim)) accepted.push({ city: city(c), claim: p.claim, sentence: claim.say(c) });
   }
-  add(report.overall.lead1MaeC); add(report.overall.lead3MaeC); add(report.overall.lead1BiasC);
-  return nums;
+  return { accepted, rejected };
 }
 
-export function parseAuditNote(text, report) {
+export function parseClaims(text) {
   const raw = extractJson(text);
-  const note = clean(raw.note, 700);
-  if (!note) throw new Error('the note is empty');
-  const allowed = allowedNumbers(report);
-  const bad = (note.match(/-?\d+(?:\.\d+)?/g) ?? []).filter((n) => !allowed.has(n) && !allowed.has(n.replace(/^-/, '')));
-  if (bad.length) throw new Error(`the note uses numbers the verification did not produce (${[...new Set(bad)].join(', ')}); use only the numbers given`);
-  return { note };
+  if (!Array.isArray(raw?.claims)) throw new Error('Reply needs a claims array');
+  return raw.claims.map((c) => ({ city: clean(c?.city, 60), claim: clean(c?.claim, 40) }));
 }
 
-export function codeNote(report) {
+export function overallSentence(report) {
   const o = report.overall;
-  const worst = [...report.cities].filter((c) => c.lead1).sort((a, b) => b.lead1.maeC - a.lead1.maeC)[0];
-  const misses = report.cities.filter((c) => c.danger.misses + c.danger.falseAlarms > 0)
-    .map((c) => `${c.place.split(',')[0]} (${c.danger.misses} missed, ${c.danger.falseAlarms} false)`);
-  return [
-    `Over the last ${report.windowDays} days, the day-ahead forecast of each day's peak heat index was off by ${o.lead1MaeC} °C on average, and by ${o.lead3MaeC} °C three days ahead.`,
-    worst ? `Least accurate: ${worst.place.split(',')[0]} (${worst.lead1.maeC} °C).` : '',
-    misses.length ? `Danger calls that went wrong one day ahead: ${misses.join(', ')}.` : 'No Danger call went wrong one day ahead.',
-  ].filter(Boolean).join(' ');
+  return `Over the last ${report.windowDays} days, the day-ahead forecast of each day's peak heat index was off by ${o.lead1MaeC} °C on average, and by ${o.lead3MaeC} °C three days ahead.`;
+}
+
+/** Without a model: the same checked claims, chosen by a fixed rule (every city with a Danger error). */
+export function codeNote(report) {
+  const picked = report.cities.flatMap((c) => [
+    ...(c.danger.misses ? [{ city: city(c), claim: 'missed_danger' }] : []),
+    ...(c.danger.falseAlarms ? [{ city: city(c), claim: 'false_alarms' }] : []),
+  ]);
+  const { accepted } = verifyClaims(picked, report);
+  return [overallSentence(report), ...accepted.map((a) => a.sentence)].join(' ');
 }
 
 export async function runAuditor({ agentLog, weather, converse, models, allowModel = true, nowMs = () => Date.now(), deadline = Date.now() + 100_000 }) {
@@ -92,6 +120,7 @@ export async function runAuditor({ agentLog, weather, converse, models, allowMod
 
   let note = codeNote(report);
   let run = null;
+  let checked = null;
   if (allowModel) {
     try {
       run = await runAgent({
@@ -99,27 +128,29 @@ export async function runAuditor({ agentLog, weather, converse, models, allowMod
           name: 'quinn',
           models,
           maxTurns: 1,
-          maxTokens: 600,
-          system: 'You are Quinn, HeatShield\'s forecast auditor. You explain to a small team of community health workers, in plain words, how far to trust the heat forecast in each city, based on a verification report. Use only the numbers in the report, exactly as written. Do not write dates. Mention the cities where the forecast ran hot or cold, or where Danger calls went wrong.',
+          maxTokens: 500,
+          system: `You are Quinn, HeatShield's forecast auditor. From a verification report, choose the 3 to 6 facts a team of community health workers most needs, to know how far to trust the heat forecast in each city. Each fact is a city and one claim from this list: ${Object.keys(CLAIMS).join(', ')}. Only choose claims the numbers support; code checks every one.`,
           tools: [],
         },
-        input: `Verification report (daily peak heat index, forecast vs the model's own analysis):\n${JSON.stringify({ windowDays: report.windowDays, overall: report.overall, cities: cities.map(({ place, lead1, lead3, danger }) => ({ place, oneDayAhead: lead1, threeDaysAhead: lead3, dangerCallsOneDayAhead: danger })) })}\n\nReply with ONLY this JSON: {"note":"3-5 plain sentences"}`,
+        input: `Verification report (daily peak heat index, forecast vs the model's own analysis):\n${JSON.stringify({ windowDays: report.windowDays, overall: report.overall, cities: cities.map(({ place, lead1, lead3, danger }) => ({ city: place.split(',')[0], oneDayAhead: lead1, threeDaysAhead: lead3, dangerCallsOneDayAhead: danger })) })}\n\nReply with ONLY this JSON: {"claims":[{"city":"Karachi","claim":"missed_danger"}]}`,
         converse,
         deadline,
-        validate: (text) => parseAuditNote(text, report),
+        validate: parseClaims,
       });
-      note = run.value.note;
+      checked = verifyClaims(run.value, report);
+      if (checked.accepted.length) note = [overallSentence(report), ...checked.accepted.map((a) => a.sentence)].join(' ');
     } catch {
-      run = null; // the code-written note stands
+      run = null; // the code-chosen note stands
     }
   }
   report.note = note;
-  report.noteBy = run ? 'model' : 'code';
+  report.noteBy = checked?.accepted.length ? 'model' : 'code';
+  report.rejectedClaims = checked?.rejected ?? [];
   await agentLog.putState('quinn', 'latest', report);
   return {
     ...(run ?? {}),
     outcome: 'audited',
     summary: `Audited ${cities.length} cities over ${report.windowDays} days: the day-ahead peak forecast was off by ${report.overall.lead1MaeC} °C on average.`,
-    detail: { overall: report.overall, cities: cities.map(({ place, lead1, danger }) => ({ place, maeC: lead1.maeC, biasC: lead1.biasC, danger })) },
+    detail: { overall: report.overall, rejectedClaims: report.rejectedClaims, cities: cities.map(({ place, lead1, danger }) => ({ place, maeC: lead1.maeC, biasC: lead1.biasC, danger })) },
   };
 }

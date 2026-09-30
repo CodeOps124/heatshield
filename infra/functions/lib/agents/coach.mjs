@@ -18,6 +18,28 @@ const clean = (s, n) => (typeof s === 'string' ? s.replace(/\s+/g, ' ').trim().s
 const norm = (s) => clean(s, 80).normalize('NFC').toLowerCase().replace(/^[\s"'«»“”‘’.,;:!?()]+|[\s"'«»“”‘’.,;:!?()]+$/g, '');
 const words = (s) => s.split(/\s+/).filter(Boolean).length;
 
+// A word list is for words that are wrong everywhere: misspellings, non-words, wrong grammatical
+// forms. "This word means X here" and style notes depend on the sentence, so they stay out. Seen on
+// the first run: "use dizziness, not unconsciousness" (Urdu) would have made Mira drop a heat-stroke
+// sign, and a Tagalog tier-name preference would have replaced "severe heating" with "extreme caution".
+const SPELLING = /not a (?:real|correct|valid)\b|not a word|misspel|typo|invented|does not exist|no such word|grammat|agreement|conjugat/i;
+const CONTEXTUAL = /\bmeans\b|idiomatic|natural|standard term|correct term|commonly|more common|awkward|redundant|clearer|better/i;
+
+function editRatio(a, b) {
+  const x = [...a];
+  const y = [...b];
+  let prev = Array.from({ length: y.length + 1 }, (_, j) => j);
+  for (let i = 1; i <= x.length; i += 1) {
+    const cur = [i];
+    for (let j = 1; j <= y.length; j += 1) cur[j] = Math.min(prev[j] + 1, cur[j - 1] + 1, prev[j - 1] + (x[i - 1] === y[j - 1] ? 0 : 1));
+    prev = cur;
+  }
+  return prev[y.length] / Math.max(x.length, y.length, 1);
+}
+
+/** A correction that is true in any sentence: a spelling or form fix, never a meaning or style choice. */
+export const isWordLevel = (note, wrong, use) => !CONTEXTUAL.test(note) && (SPELLING.test(note) || editRatio(wrong, use) <= 0.4);
+
 /** Term-level corrections from Lexi's runs, counted by (language, wrong, right). */
 export function candidatesFrom(runs, glossaries = {}) {
   const found = new Map();
@@ -31,6 +53,7 @@ export function candidatesFrom(runs, glossaries = {}) {
       if (!wrong || !use || wrong === use) continue;
       if (words(wrong) > 3 || words(use) > 3 || wrong.length > 32 || use.length > 32) continue; // phrases are not vocabulary
       if (LANGUAGES[lang].script && !LANGUAGES[lang].script.test(use)) continue; // the fix must be in the language's script
+      if (!isWordLevel(issue.problem ?? '', wrong, use)) continue;
       if ((glossaries[lang] ?? []).some((e) => e.wrong === wrong)) continue;
       const key = `${lang}|${wrong}|${use}`;
       const c = found.get(key) ?? { language: lang, wrong, use, note: clean(issue.problem, 200), seen: 0, lastSeen: run.at };
@@ -105,7 +128,9 @@ export async function runCoach({ agentLog, converse, models, allowModel = true, 
       usage.inputTokens += run.usage.inputTokens;
       usage.outputTokens += run.usage.outputTokens;
       usedModel = run.model;
-      const confirmed = list.map((c, i) => ({ ...c, ...run.value[i] })).filter((c) => c.approve && c.meaning);
+      // A gloss is a few English words ("cold water"), not an explanation.
+      const confirmed = list.map((c, i) => ({ ...c, ...run.value[i] }))
+        .filter((c) => c.approve && c.meaning && c.meaning.length <= 40 && !/['"]|\bnot\b/i.test(c.meaning));
       rejected += list.length - confirmed.length;
       if (confirmed.length) {
         const entries = mergeGlossary(glossaries[lang], confirmed, new Date(nowMs()).toISOString());

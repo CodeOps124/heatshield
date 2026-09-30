@@ -113,6 +113,11 @@ export function buildAreas(locations) {
 
 // Briefings are read by community health workers, not meteorologists.
 const JARGON = /\b(?:tiers?|EHF|excess heat factors?|evidence ceiling)\b/gi;
+// HeatShield measures unusual HEAT only (a zero or negative Excess Heat Factor means "not unusually
+// hot", not "cooler than usual"). Seen live: "Ho Chi Minh City and Dhaka are cooler than usual".
+export const COOLER_CLAIM = /(?:cooler|colder|milder) than (?:usual|normal|average)|below (?:normal|average)|unusually (?:cool|cold)/i;
+/** Drops the sentences that make an unsupported claim. */
+export const withoutSentences = (text, re) => text.split(/(?<=[.!?])\s+/).filter((sentence) => !re.test(sentence)).join(' ').trim();
 export const findJargon = (text) => [...new Set((String(text).match(JARGON) ?? []).map((m) => m.toLowerCase()))];
 
 const WEEKDAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
@@ -190,7 +195,7 @@ const ENSEMBLE_FETCHES_PER_RUN = 3; // Open-Meteo weighs ensemble calls heavily;
 const ENSEMBLE_MAX_AGE_MS = 6 * 3600_000; // ECMWF runs its ensemble twice a day
 const CARRY_MS = 3 * 3600_000;
 // Part of the fingerprint: changing how briefings are written triggers one fresh briefing.
-const BRIEFING_VERSION = 6;
+const BRIEFING_VERSION = 7;
 
 export async function runSentinel({ store, weather, climate, agentLog, converse, models, deadline = Date.now() + 240_000, nowMs = () => Date.now(), retryPauseMs = 20_000, allowModel = true }) {
   const areas = buildAreas(await store.listAllLocations());
@@ -348,12 +353,14 @@ export async function runSentinel({ store, weather, climate, agentLog, converse,
   const signal = (c) => ({
     areaId: c.areaId, place: c.place, people: c.people, vulnerablePeople: c.vulnerable, outdoorWorkers: c.workers,
     evidenceCeiling: c.ceiling, previousLevel: prevLevels.get(c.place) ?? null,
-    excessHeatFactor: c.ehf.climatePending ? 'not available yet (local climatology still being computed)' : c.ehf.days.map((d) => ({ date: d.date, day: weekday(d.date), ehf: d.ehf, severity: d.severity })),
+    unusualHeatForTheSeason: c.ehf.climatePending ? 'not available yet (local climatology still being computed)'
+      : c.ehf.days.map((d) => ({ date: d.date, day: weekday(d.date), level: d.severity === 'none' ? 'not unusually hot for the season (this does NOT mean cooler than usual)' : d.severity })),
     heatIndexByDay: c.hiDays.map((d) => ({ ...d, day: weekday(d.date) })), tmaxTrendCPerDay: c.tmaxTrendCPerDay, tropicalNightsAhead: c.tropicalNights,
     forecastTrackRecord: skillFor(c.place),
     ensembleChanceByDay: c.ensemble?.days?.map((d) => ({ date: d.date, day: weekday(d.date), chanceOfDangerPct: Math.round(d.pDanger * 100), chanceOfExtremeDangerPct: Math.round(d.pExtremeDanger * 100), peakHeatIndexC: d.peakHeatIndexC })) ?? 'not available',
   });
   let plainWordsAsked = false;
+  let coolerAsked = false;
   const run = await runAgent({
     agent: {
       name: 'sol',
@@ -370,7 +377,11 @@ export async function runSentinel({ store, weather, climate, agentLog, converse,
           handler: async ({ areaId }) => {
             const c = candidates.find((a) => a.areaId === areaId);
             if (!c) throw new Error('No such area');
-            return { ...signal(c), climate: c.climate, ehfDays: c.ehf.days };
+            return {
+              ...signal(c),
+              climate: c.climate,
+              excessHeatFactor: { meaning: 'positive = hotter than this place\'s 95th percentile for the time of year; zero or negative = not unusually hot, which does NOT mean cooler than usual', days: c.ehf.days },
+            };
           },
         },
         {
@@ -388,6 +399,16 @@ export async function runSentinel({ store, weather, climate, agentLog, converse,
     repairs: 2,
     validate: (text) => {
       const out = parseSentinelOutput(text, candidates);
+      if (COOLER_CLAIM.test(out.briefing)) {
+        if (!coolerAsked) {
+          coolerAsked = true;
+          throw new Error('the briefing says a place is cooler than usual, but HeatShield only measures unusual heat: a place without a heatwave is "not unusually hot for the season", never "cooler than usual". Rewrite without that claim');
+        }
+        // Never fall back to the false sentence: with nothing left, ask again (a failed run keeps the last briefing).
+        const kept = withoutSentences(out.briefing, COOLER_CLAIM);
+        if (!kept) throw new Error('nothing is left once the "cooler than usual" claims are removed. Write 3-5 sentences about the heat signals only');
+        out.briefing = kept;
+      }
       const jargon = findJargon(out.briefing);
       if (jargon.length && !plainWordsAsked) {
         // One rewrite for plain words; after that, the facts matter more than the wording.

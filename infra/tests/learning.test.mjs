@@ -2,8 +2,10 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { verifyPeaks } from '../functions/lib/algorithms/verification.mjs';
-import { runAuditor, parseAuditNote, codeNote } from '../functions/lib/agents/auditor.mjs';
-import { candidatesFrom, runCoach, mergeGlossary, glossaryLines, createGlossaryLoader, MAX_WORDS } from '../functions/lib/agents/coach.mjs';
+import { runAuditor, verifyClaims, codeNote } from '../functions/lib/agents/auditor.mjs';
+import { candidatesFrom, runCoach, mergeGlossary, glossaryLines, createGlossaryLoader, MAX_WORDS, isWordLevel } from '../functions/lib/agents/coach.mjs';
+import { runSentinel, COOLER_CLAIM, withoutSentences } from '../functions/lib/agents/sentinel.mjs';
+import { createStore } from '../functions/lib/store.mjs';
 import { bestShift } from '../functions/lib/agents/coordinator.mjs';
 import { buildSystemPrompt, createGuidanceService } from '../functions/lib/guidance.mjs';
 import { createAgentLog } from '../functions/lib/agent-log.mjs';
@@ -41,25 +43,43 @@ test('verification: error, bias, tier agreement and Danger hits / misses / false
   assert.ok(v.lead1.maeC > 0 && v.lead3.maeC < v.lead1.maeC);
 });
 
-test('Quinn: a note with a number the verification did not produce is rejected; the code note is the fallback', async () => {
+test('Quinn 30 Sep: the model called Karachi\'s Danger record "perfect" (it missed 2 days); claims are now checked by code', async () => {
+  const karachi = { place: 'Karachi, Pakistan', lead1: { days: 14, maeC: 0.6, biasC: 0, tierAgreement: 0.86 }, lead3: { days: 14, maeC: 1, biasC: 0.3, tierAgreement: 0.71 }, danger: { hits: 4, misses: 2, falseAlarms: 0, correctNegatives: 8 } };
+  const dubai = { place: 'Dubai, United Arab Emirates', lead1: { days: 14, maeC: 1.2, biasC: 0.5, tierAgreement: 1 }, lead3: { days: 14, maeC: 2.3, biasC: 1.3, tierAgreement: 1 }, danger: { hits: 14, misses: 0, falseAlarms: 0, correctNegatives: 0 } };
+  const report = { windowDays: 14, cities: [karachi, dubai], overall: { lead1MaeC: 0.9, lead3MaeC: 1.7, lead1BiasC: 0.3 } };
+  const { accepted, rejected } = verifyClaims([
+    { city: 'Karachi', claim: 'reliable_danger_calls' },
+    { city: 'Karachi', claim: 'missed_danger' },
+    { city: 'Dubai', claim: 'ran_hot' },
+    { city: 'Dubai', claim: 'reliable_danger_calls' },
+    { city: 'Atlantis', claim: 'ran_hot' },
+  ], report);
+  assert.deepEqual(accepted.map((a) => a.sentence), [
+    'Karachi: the day-ahead forecast missed 2 Danger day(s).',
+    'Dubai: the forecast ran hot (+0.5 °C one day ahead, +1.3 °C three days ahead).',
+    'Dubai: every day-ahead Danger forecast was right (14 of 14).',
+  ]);
+  assert.deepEqual(rejected.map((r) => `${r.city}:${r.claim}`), ['Karachi:reliable_danger_calls', 'Atlantis:ran_hot']);
+  assert.match(codeNote(report), /Karachi: the day-ahead forecast missed 2 Danger day/);
+  // Mixed signs are not "ran hot"; "most accurate" needs something to compare with.
+  const mixed = { ...dubai, lead1: { ...dubai.lead1, biasC: -0.6 }, lead3: { ...dubai.lead3, biasC: 0.8 } };
+  assert.deepEqual(verifyClaims([{ city: 'Dubai', claim: 'ran_hot' }, { city: 'Dubai', claim: 'ran_cold' }], { ...report, cities: [mixed] }).accepted.map((a) => a.claim), ['ran_cold']);
+  assert.equal(verifyClaims([{ city: 'Dubai', claim: 'most_accurate' }], { ...report, cities: [dubai] }).accepted.length, 0);
+});
+
+test('Quinn end to end: verified claims make the note; an unsupported one is recorded as rejected', async () => {
   const { db, tables } = createFakeDb();
   const agentLog = createAgentLog({ db, table: tables.agentLog });
   await agentLog.putState('sol', 'latest', { areas: [{ place: 'Dhaka, Bangladesh', lat: 23.8, lon: 90.4 }] });
   const days = Array.from({ length: 15 }, (_, i) => new Date(Date.UTC(2026, 8, 16 + i)).toISOString().slice(0, 10));
   const weather = { getPreviousRuns: async () => ({ hourly: previousRuns({ days, truth: days.map(() => 35), lead1: days.map(() => 36), lead3: days.map(() => 37) }), utcOffsetSeconds: 21600 }) };
-  const nowMs = () => Date.parse('2026-09-30T01:30:00Z');
-
-  const r = await runAuditor({ agentLog, weather, converse: async () => text('{"note":"The forecast was off by 7.5 degrees in Dhaka."}'), models: ['m'], nowMs });
+  const claims = { claims: [{ city: 'Dhaka', claim: 'ran_hot' }, { city: 'Dhaka', claim: 'ran_cold' }] };
+  const r = await runAuditor({ agentLog, weather, converse: async () => text(JSON.stringify(claims)), models: ['m'], nowMs: () => Date.parse('2026-09-30T01:30:00Z') });
   const report = await agentLog.getState('quinn', 'latest');
   assert.equal(r.outcome, 'audited');
-  assert.equal(report.noteBy, 'code', 'an invented number sends the note back, then the code note stands');
-  assert.equal(report.cities[0].lead1.days, 14);
-  assert.match(report.note, /off by/);
-
-  const ok = parseAuditNote(JSON.stringify({ note: `In Dhaka the day-ahead peak was off by ${report.cities[0].lead1.maeC} °C over ${report.windowDays} days.` }), report);
-  assert.match(ok.note, /Dhaka/);
-  assert.throws(() => parseAuditNote('{"note":"Off by 9.9 °C."}', report), /did not produce/);
-  assert.match(codeNote(report), /No Danger call went wrong|went wrong one day ahead/);
+  assert.equal(report.noteBy, 'model');
+  assert.match(report.note, /^Over the last 14 days[\s\S]*Dhaka: the forecast ran hot/);
+  assert.deepEqual(report.rejectedClaims.map((x) => x.claim), ['ran_cold']);
 });
 
 // ---------------------------------------------------------------- Iris
@@ -105,6 +125,37 @@ test('Iris publishes only what the second opinion confirms, and Mira then gets t
   const svc = createGuidanceService({ converse: async (p) => { system = p.system[0].text; return text(JSON.stringify(good)); }, cache: { get: async () => null, put: async () => {} }, models: ['w'], log: silentLog, glossary: loader });
   await svc.getGuidance(assessRisk(makeForecast({ nowHour: 9, temp: diurnal(27, 38), rh: () => 55 }), 'general'), 'hi');
   assert.match(system, /"दोपहर" \(midday\), not "दोर्पर"/);
+});
+
+test('Iris 30 Sep: only word-level fixes go on the list; "means X here" and style choices stay out', () => {
+  // Real corrections from the first run.
+  assert.equal(isWordLevel("'بے ہوشی' means 'unconsciousness', and the context suggests dizziness", 'بے ہوشی', 'چکر آنا'), false, 'would have removed a heat-stroke sign');
+  assert.equal(isWordLevel("'Malubhang pag-init' is not the correct term for 'Extreme Caution'", 'malubhang pag-init', 'labis na pag-iingat'), false);
+  assert.equal(isWordLevel("'matokeo' means 'results', which does not fit the context", 'matokeo makini sana', 'hatua makini sana'), false);
+  assert.equal(isWordLevel("The phrase 'धुंधला दिखना' is not idiomatic.", 'धुंधला दिखना', 'धुंधला दिखाई देना'), false);
+  assert.equal(isWordLevel("'تھڑی' is not a correct Urdu word. The correct word for 'midday' is 'دوپہر'.", 'تھڑی دھوپ', 'دوپہر کی دھوپ'), true);
+  assert.equal(isWordLevel("Incorrect word; should be 'ठंडा पानी'", 'चंदा पानि', 'ठंडा पानी'), true, 'a small edit of the same phrase');
+  assert.equal(isWordLevel("'Mtelezaji' is not a real Swahili word. It seems intended to mean 'anyone'.", 'mtelezaji', 'mtu yeyote'), true);
+});
+
+test('Sol 30 Sep: "Dhaka is cooler than usual" is sent back; if it comes back again, the sentence is dropped', async () => {
+  assert.ok(COOLER_CLAIM.test('Ho Chi Minh City and Dhaka are cooler than usual for this time of year.'));
+  assert.ok(!COOLER_CLAIM.test('Dhaka is not unusually hot for the season.'));
+  assert.equal(withoutSentences('Dubai is hot. Dhaka is cooler than usual. Watch nights.', COOLER_CLAIM), 'Dubai is hot. Watch nights.');
+  const { db, tables } = createFakeDb();
+  const agentLog = createAgentLog({ db, table: tables.agentLog });
+  const store = createStore({ db, tables });
+  await db.put({ table: 'locations', item: { locationId: 'l1', lat: 25.2, lon: 55.27, placeName: 'Dubai', profile: 'outdoor_worker' } });
+  const dates = Array.from({ length: 38 }, (_, i) => new Date(Date.UTC(2026, 8, 1 + i)).toISOString().slice(0, 10));
+  const weather = { getForecast: async () => makeForecast({ nowHour: 9, temp: diurnal(27, 38), rh: () => 55 }), getDaily: async () => ({ dates, today: dates[31], tmax: Array(38).fill(38), tmin: Array(38).fill(29) }) };
+  const reply = (briefing) => text(JSON.stringify({ briefing, events: [{ areaId: 'A1', level: 'warning' }] }));
+  const replies = [reply('Dubai has dangerous heat. Lagos is cooler than usual.'), reply('Dubai has dangerous heat. Lagos is colder than normal this week.')];
+  await runSentinel({ store, weather, climate: { get: async () => null }, agentLog, converse: async () => replies.shift(), models: ['m'], retryPauseMs: 0 });
+  assert.equal((await agentLog.getState('sol', 'latest')).briefing, 'Dubai has dangerous heat.');
+  // A briefing that is nothing but the false claim is never published as is.
+  const only = [reply('Lagos is cooler than usual.'), reply('Lagos is colder than normal.'), reply('Dubai has dangerous heat on Friday.')];
+  await runSentinel({ store, weather, climate: { get: async () => null }, agentLog, converse: async () => only.shift(), models: ['m'], retryPauseMs: 0, nowMs: () => Date.now() + 7 * 3600_000 });
+  assert.equal((await agentLog.getState('sol', 'latest')).briefing, 'Dubai has dangerous heat on Friday.');
 });
 
 test('the word list stays short: newest confirmed entries first, capped', () => {
