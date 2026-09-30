@@ -124,18 +124,46 @@ export function checkAnswer(answer, { allowed, question, language }) {
   if (bad.length) problems.push({ kind: 'numbers', detail: bad, message: `these numbers are not in any tool result or vetted fact: ${bad.join(', ')}. Use only numbers the tools gave you, or leave the figure out` });
   const rules = safetyHits(answer);
   if (rules.length) problems.push({ kind: 'safety', detail: rules.map((r) => r.detector), message: `${rules.map((r) => r.problem).join(' ')} Remove it` });
-  if (HEAT_STROKE_SIGNS.test(question) && !namesEmergencyNumber({ seekHelp: answer }, language)) {
-    problems.push({ kind: 'emergency', message: 'the person describes signs of heat stroke: start by telling them to call their local emergency number now' });
+  // Live, 30 Sep: the call for help came last ("Next step: call emergency services now"); it must come first.
+  if (HEAT_STROKE_SIGNS.test(question) && !namesEmergencyNumber({ seekHelp: sentencesOf(answer)[0] ?? '' }, language)) {
+    problems.push({ kind: 'emergency', message: 'the person describes signs of heat stroke: the first sentence must tell them to call their local emergency number now' });
   }
   if (answer.length > 1400) problems.push({ kind: 'length', message: 'the answer is too long: keep it under 150 words' });
   return problems;
 }
 
+const sentencesOf = (text) => String(text).split(/(?<=[.!?。！？؟।])\s+|\n+/u).map((s) => s.trim()).filter(Boolean);
+
+/** Moves the sentence that names the emergency number to the front (language-independent). */
+export function emergencyFirst(text, language) {
+  const all = sentencesOf(text);
+  const i = all.findIndex((s) => namesEmergencyNumber({ seekHelp: s }, language));
+  if (i <= 0) return text;
+  const call = all.splice(i, 1)[0].replace(/^[^:：]{0,20}[:：]\s*/u, ''); // "Next step: call…" → "Call…"
+  return [call.charAt(0).toLocaleUpperCase() + call.slice(1), ...all].join(' ');
+}
+
 /** The last resort after one rewrite: drop what cannot be verified, keep the rest. */
-export function cleanAnswer(answer, { allowed }) {
+export function cleanAnswer(answer, { allowed, question = '', language = 'en' }) {
   let { text, removed } = dropSentences(answer, (s) => unsupportedNumbers(s, allowed).length > 0 || safetyHits(s).length > 0);
+  if (HEAT_STROKE_SIGNS.test(question)) text = emergencyFirst(text, language);
   if (text.length > 1400) text = `${text.slice(0, 1400).replace(/\s+\S*$/, '')}…`;
   return { text, removed };
+}
+
+/**
+ * Lines of an answer that repeat a plan shown under it (live, 30 Sep: Kai retold Mira's reviewed
+ * Hindi plan above the plan card). Compared without bullets, spacing or case.
+ */
+export function withoutPlanLines(answer, plan) {
+  const norm = (s) => String(s ?? '').normalize('NFC').replace(/^[\s\-*•\d.)]+/u, '').replace(/\s+/g, ' ').trim().toLowerCase();
+  const planLines = [plan.headline, ...(plan.actions ?? []), plan.seekHelp].map(norm).filter((l) => l.length >= 8);
+  const kept = String(answer).split('\n').filter((line) => {
+    const n = norm(line);
+    if (/^[-–—*_=\s]{3,}$/.test(line.trim())) return false; // separators left behind
+    return !n || !planLines.some((p) => p.includes(n.length >= 8 ? n : '\u0000') || n.includes(p));
+  });
+  return kept.join('\n').replace(/\n{3,}/g, '\n\n').trim();
 }
 
 /** Model text to plain answer: no private reasoning, no markdown decoration, no sentence linking outside HeatShield. */
@@ -386,7 +414,7 @@ export function createAskService({ weather, guidance, agentLog, converse, models
         const problems = checkAnswer(answer, { allowed, question, language: languageOf(answer, language) });
         if (!problems.length) return answer;
         if (asked === 0) { asked += 1; rewrites += 1; throw new Error(problems.map((p) => p.message).join('; ')); }
-        const cleaned = cleanAnswer(answer, { allowed });
+        const cleaned = cleanAnswer(answer, { allowed, question, language: languageOf(answer, language) });
         removed = cleaned.removed;
         return cleaned.text || 'The team could not verify an answer to that. Please ask again, or check your heat risk on the home page.';
       };
@@ -414,10 +442,12 @@ export function createAskService({ weather, guidance, agentLog, converse, models
         summary: `Answered a visitor's question in ${LANGUAGES[language].name}${trace.length ? `, with ${agents.filter((a) => a !== 'kai').join(', ')}` : ''}.`,
         detail: { language, agents, tools: trace.map((t) => t.agent), rewrites, removedSentences: removed },
       }).catch(() => {});
-      const written = languageOf(run.value, language); // the language it was actually written in
+      const plan = plans.at(-1) ?? null;
+      const answer = plan ? withoutPlanLines(run.value, plan) : run.value; // the plan is shown as reviewed, once
+      const written = languageOf(answer || run.value, language); // the language it was actually written in
       return {
-        answer: run.value, language: written, dir: LANGUAGES[written].dir ?? 'ltr',
-        plan: plans.at(-1) ?? null,
+        answer, language: written, dir: LANGUAGES[written].dir ?? 'ltr',
+        plan,
         trace: trace.map(({ agent, action, ms: t, ok, steps }) => ({ agent, action, ms: t, ok, ...(steps ? { steps } : {}) })),
         agents, model: run.model, durationMs: ms, checks: { rewrites, removedSentences: removed },
       };

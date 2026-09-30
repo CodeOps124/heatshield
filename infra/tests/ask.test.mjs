@@ -1,7 +1,7 @@
 // Ask the team: Kai assigns a question to the agents' real tools; code decides what the answer may say.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { createAskService, createAskLimiter, answerLanguage, allowedNumbers, unsupportedNumbers, checkAnswer, cleanAnswer, asciiDigits, tidy } from '../functions/lib/ask.mjs';
+import { createAskService, createAskLimiter, answerLanguage, allowedNumbers, unsupportedNumbers, checkAnswer, cleanAnswer, asciiDigits, tidy, withoutPlanLines, emergencyFirst } from '../functions/lib/ask.mjs';
 import { conversation } from '../functions/lib/agent-runtime.mjs';
 import { createPublicApi } from '../functions/lib/public-routes.mjs';
 import { createAgentLog } from '../functions/lib/agent-log.mjs';
@@ -130,6 +130,19 @@ test('Mira\'s plan through Ask (live, 30 Sep: Kai retold a reviewed Hindi plan):
   assert.deepEqual([r.plan.listen, r.plan.source], [true, 'bedrock'], 'Hindi has a Polly voice');
   assert.deepEqual([r.language, r.dir], ['hi', 'ltr'], 'asked in English, answered in Hindi as requested');
   assert.match(w.calls[1].messages.at(-1).content[0].toolResult.content[0].json.shownToThePersonAsIs ? 'yes' : 'no', /yes/);
+});
+
+test('live, 30 Sep: Kai retold the plan above the plan card, and put the call for help last; code fixes both', async () => {
+  const plan = { headline: 'आज बहुत गर्मी है, कृपया सावधान रहें।', actions: ['- अब से ही ठंडे पानी पीएं।', 'दोपहर से रात तक घर के अंदर ठंडा रखें।'], seekHelp: 'अगर कोई व्यक्ति भ्रमित हो तो तुरंत अपने स्थानीय आपातकालीन नंबर पर कॉल करें।' };
+  const told = 'Here is your grandmother\'s heat plan in Hindi, prepared by Mira and reviewed by Lexi and Vera:\n---\nआज बहुत गर्मी है, कृपया सावधान रहें।\n- अब से ही ठंडे पानी पीएं।\n- दोपहर से रात तक घर के अंदर ठंडा रखें।\nकब मदद लें: अगर कोई व्यक्ति भ्रमित हो तो तुरंत अपने स्थानीय आपातकालीन नंबर पर कॉल करें।\n---\nWould you like the outlook for Delhi?';
+  assert.equal(withoutPlanLines(told, plan), 'Here is your grandmother\'s heat plan in Hindi, prepared by Mira and reviewed by Lexi and Vera:\nWould you like the outlook for Delhi?');
+
+  const last = 'While you wait for help: move them to a shaded, cool area. Stay with them.\nNext step: call emergency services now if you haven\'t already.';
+  assert.deepEqual(checkAnswer(last, { allowed: allowedNumbers([]), question: 'He is confused and his skin is hot and dry', language: 'en' }).map((p) => p.kind), ['emergency']);
+  assert.equal(emergencyFirst(last, 'en'), 'Call emergency services now if you haven\'t already. While you wait for help: move them to a shaded, cool area. Stay with them.');
+  const w = world({ replies: [call(['vetted_facts', { question: 'confused hot dry' }]), say(last), say(last)] });
+  const r = await w.service.ask({ message: 'My coworker is confused and his skin is hot and dry. What do I do?' });
+  assert.match(r.answer, /^Call emergency services now/, 'after one rewrite that did not fix it, code moves the call to the front');
 });
 
 test('Quinn\'s daily audit answers for the cities he covers, so the chat and Agent HQ agree', async () => {
