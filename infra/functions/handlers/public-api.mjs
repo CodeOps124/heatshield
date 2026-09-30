@@ -7,6 +7,7 @@ import { createStore } from '../lib/store.mjs';
 import { createAgentLog } from '../lib/agent-log.mjs';
 import { createAgentsApi } from '../lib/agents-api.mjs';
 import { createControl } from '../lib/control.mjs';
+import { createGlossaryLoader } from '../lib/agents/coach.mjs';
 import { createLanguageReviewer } from '../lib/agents/language-reviewer.mjs';
 import { createSafetyReviewer } from '../lib/agents/safety-reviewer.mjs';
 import { dynamo, converse, tables, models, reviewerModels, invokeAgent } from '../lib/aws.mjs';
@@ -24,7 +25,7 @@ export const handler = createPublicApi({
     models,
     log,
     agentLog,
-    gate: () => control.generation('mira'), // operator pause or the daily budget brake
+    gate: () => control.generation('mira'), glossary: createGlossaryLoader({ agentLog }), // operator pause or the daily budget brake
     reviewers: {
       language: createLanguageReviewer({ converse, models: reviewerModels }),
       safety: createSafetyReviewer({ converse, models: reviewerModels }),

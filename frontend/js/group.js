@@ -51,6 +51,7 @@ function renderPlan(plan) {
       el('div', { class: 'member-name' }, `${c.name}: check in ${c.checkInBy === 'now' ? 'now' : `before ${c.checkInBy}`}`),
       el('div', { class: 'member-sub' }, `${TIER_LABELS[c.tier] ?? c.tier} in the next 12 hours · risky ${c.riskyHours ?? 'hours not known'}`),
       el('p', { class: 'checkin-action' }, c.action),
+      c.shift?.best ? el('p', { class: 'member-sub' }, `Safest ${c.shift.length}-hour shift on ${c.shift.day}: ${c.shift.best.start}-${c.shift.best.end} (${c.shift.best.dangerHours} h in Danger)${c.shift.standard ? `; a ${c.shift.standard.start}-${c.shift.standard.end} shift would have ${c.shift.standard.dangerHours} h in Danger and ${c.shift.standard.extremeCautionHours} h in Extreme Caution` : ''}.`) : null,
       c.reason ? el('p', { class: 'member-sub' }, c.reason) : null))),
     plan.teamNote ? el('div', { class: 'callout info mt-16' }, el('p', {}, plan.teamNote)) : null,
   );

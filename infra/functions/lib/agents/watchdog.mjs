@@ -35,7 +35,7 @@ export const PROBES = [
 ];
 
 // How often each scheduled agent/worker must check in (minutes).
-export const HEARTBEATS = { sol: 60, kai: 180, dispatch: 60 };
+export const HEARTBEATS = { sol: 60, kai: 180, dispatch: 60, quinn: 1440, iris: 1440 };
 
 const clean = (s, n) => (typeof s === 'string' ? s.replace(/\s+/g, ' ').trim().slice(0, n) : '');
 

@@ -9,6 +9,8 @@
 
 const FORECAST_URL = 'https://api.open-meteo.com/v1/forecast';
 const GEOCODE_URL = 'https://geocoding-api.open-meteo.com/v1/search';
+const ENSEMBLE_URL = 'https://ensemble-api.open-meteo.com/v1/ensemble';
+const PREVIOUS_RUNS_URL = 'https://previous-runs-api.open-meteo.com/v1/forecast';
 const TIMEOUT_MS = 4000;
 const CACHE_TTL_MS = 10 * 60 * 1000;
 const CACHE_MAX = 500;
@@ -148,5 +150,39 @@ export function createWeatherClient({ fetchImpl = globalThis.fetch, now = () => 
     }));
   }
 
-  return { getForecast, getDaily, geocode };
+  /** ECMWF IFS ensemble (control + 50 members), hourly temperature and humidity for 4 days, local time. */
+  async function getEnsemble(lat, lon) {
+    const params = new URLSearchParams({
+      latitude: String(roundCoord(lat)),
+      longitude: String(roundCoord(lon)),
+      hourly: 'temperature_2m,relative_humidity_2m',
+      models: 'ecmwf_ifs025',
+      forecast_days: '4',
+      timezone: 'auto',
+    });
+    const json = await getJson(`${ENSEMBLE_URL}?${params}`, fetchImpl, retryDelayMs);
+    if (!Array.isArray(json?.hourly?.time)) throw new UpstreamError('Unexpected ensemble payload');
+    return json.hourly;
+  }
+
+  /**
+   * The last 14 days as analysed by the model, next to what it forecast 1 and 3 days before
+   * (Open-Meteo Previous Runs API): the input to forecast verification.
+   */
+  async function getPreviousRuns(lat, lon) {
+    const vars = ['temperature_2m', 'relative_humidity_2m'];
+    const params = new URLSearchParams({
+      latitude: String(roundCoord(lat)),
+      longitude: String(roundCoord(lon)),
+      hourly: [...vars, ...vars.map((v) => `${v}_previous_day1`), ...vars.map((v) => `${v}_previous_day3`)].join(','),
+      past_days: '14',
+      forecast_days: '1',
+      timezone: 'auto',
+    });
+    const json = await getJson(`${PREVIOUS_RUNS_URL}?${params}`, fetchImpl, retryDelayMs);
+    if (!Array.isArray(json?.hourly?.time)) throw new UpstreamError('Unexpected previous-runs payload');
+    return { hourly: json.hourly, utcOffsetSeconds: json.utc_offset_seconds ?? 0 };
+  }
+
+  return { getForecast, getDaily, geocode, getEnsemble, getPreviousRuns };
 }

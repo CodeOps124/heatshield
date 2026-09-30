@@ -8,6 +8,7 @@ import { createGuidanceService } from '../lib/guidance.mjs';
 import { createStore } from '../lib/store.mjs';
 import { createAgentLog, recorded } from '../lib/agent-log.mjs';
 import { createControl } from '../lib/control.mjs';
+import { createGlossaryLoader } from '../lib/agents/coach.mjs';
 import { createLanguageReviewer } from '../lib/agents/language-reviewer.mjs';
 import { createSafetyReviewer } from '../lib/agents/safety-reviewer.mjs';
 import { dynamo, converse, notifier, tables, models, reviewerModels } from '../lib/aws.mjs';
@@ -19,7 +20,7 @@ const control = createControl({ agentLog });
 const weather = createWeatherClient();
 // Alerts are never paused. With AI work paused, their advice comes from the cache or is pre-written.
 const guidance = createGuidanceService({
-  converse, cache: store.guidanceCache, models, log, agentLog, gate: () => control.generation('mira'),
+  converse, cache: store.guidanceCache, models, log, agentLog, gate: () => control.generation('mira'), glossary: createGlossaryLoader({ agentLog }),
   reviewers: {
     language: createLanguageReviewer({ converse, models: reviewerModels }),
     safety: createSafetyReviewer({ converse, models: reviewerModels }),

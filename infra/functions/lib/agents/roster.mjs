@@ -52,6 +52,22 @@ export const ROSTER = [
     model: 'Amazon Nova 2 Lite (only when something is wrong)', tools: ['get_triage', 'get_error_samples'],
     trigger: 'Every 15 minutes', schedule: { everyMin: 15, offsetMin: 0 },
   },
+  {
+    id: 'quinn', name: 'Quinn', role: 'Forecast Auditor', desk: 'Verification desk',
+    expertise: 'Forecast verification: how far the heat forecast can be trusted in each city.',
+    algorithm: 'Day-ahead and 3-day-ahead peak heat index vs the model\'s own analysis, last 14 days: mean error, bias, tier agreement, Danger hits / misses / false alarms',
+    decides: 'The track record Sol is given for each city; writes a plain-language note (code rejects any number it did not compute).',
+    model: 'Amazon Nova 2 Lite', tools: [],
+    trigger: 'Every day at 01:30 UTC', schedule: { everyMin: 1440, offsetMin: 90 },
+  },
+  {
+    id: 'iris', name: 'Iris', role: 'Learning Coach', desk: 'Terminology desk',
+    expertise: 'Terminology management: the team learns from the words its reviewer corrected.',
+    algorithm: 'Term-level corrections from 7 days of Lexi\'s reviews: script check, normalising, counting repeats, ranking; a second opinion before anything is published',
+    decides: 'Which corrected words go on Mira\'s word list for each language.',
+    model: 'Amazon Nova Pro', tools: [],
+    trigger: 'Every day at 02:30 UTC', schedule: { everyMin: 1440, offsetMin: 150 },
+  },
 ];
 
 export const WORKERS = [

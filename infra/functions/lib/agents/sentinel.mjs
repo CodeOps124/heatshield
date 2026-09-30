@@ -6,6 +6,8 @@
  *     detects heatwaves RELATIVE TO LOCAL CLIMATE (41 °C is normal in Dubai in August, not in Paris)
  *   - NWS heat-index tiers for the physiological risk of the coming days
  *   - least-squares trend of daily maximum temperature (°C/day)
+ *   - ensemble probabilities: the NWS heat index over all 51 members of the ECMWF IFS ensemble gives
+ *     the chance of Danger on each day (algorithms/ensemble.mjs)
  * The algorithm sets a CEILING on how severe each event may be called; the model ranks, compares
  * with its previous briefing (new / escalating / easing), and writes the situation briefing. It
  * cannot escalate beyond the evidence.
@@ -16,6 +18,7 @@ import { assessEhf, climatology } from '../algorithms/ehf.mjs';
 import { linearRegression } from '../algorithms/stats.mjs';
 import { assessRisk, tierRank } from '../heat.mjs';
 import { mapLimit } from '../util.mjs';
+import { exceedance, likelihood } from '../algorithms/ensemble.mjs';
 
 const VULNERABLE = new Set(['elderly', 'chronic_condition', 'child', 'pregnant']);
 const LEVELS = ['watch', 'warning', 'emergency'];
@@ -50,14 +53,36 @@ export function createClimateService({ agentLog, fetchImpl = globalThis.fetch })
   };
 }
 
-/** Algorithmic ceiling: the most severe level the evidence supports. */
+const LEVEL_RANK = { watch: 1, warning: 2, emergency: 3 };
+const higher = (a, b) => ((LEVEL_RANK[a] ?? 0) >= (LEVEL_RANK[b] ?? 0) ? a : b);
+export const maxChance = (area, key) => {
+  const days = area.ensemble?.days;
+  return days?.length ? Math.max(...days.map((d) => d[key])) : null;
+};
+
+/**
+ * Algorithmic ceiling: the most severe level the evidence supports.
+ *   Heatwave for the place and season (Excess Heat Factor): extreme → emergency, severe → warning,
+ *   low-intensity → watch.
+ *   Heat index (NWS tiers of the single best forecast): extreme danger → emergency, danger → warning;
+ *   when the 51-member ensemble is available, that call must be at least "possible" (≥ 30% of the
+ *   forecasts), or it is capped one step lower (seen live: Dhaka's "danger on Wednesday" was 0.1 °C
+ *   over the line in one forecast and reached Danger in only 14-27% of the ensemble). And if half
+ *   the ensemble reaches Danger when the single forecast does not, a watch is allowed: early notice.
+ */
 export function evidenceCeiling(area) {
   const worstEhf = area.ehf?.worst?.severity ?? 'none';
+  const byEhf = { extreme: 'emergency', severe: 'warning', 'low-intensity': 'watch' }[worstEhf] ?? null;
   const worstTier = area.hiDays.reduce((w, d) => Math.max(w, tierRank(d.tier)), 0);
-  if (worstEhf === 'extreme' || worstTier >= tierRank('extreme_danger')) return 'emergency';
-  if (worstEhf === 'severe' || worstTier >= tierRank('danger')) return 'warning';
-  if (worstEhf === 'low-intensity') return 'watch';
-  return null;
+  let byTier = worstTier >= tierRank('extreme_danger') ? 'emergency' : worstTier >= tierRank('danger') ? 'warning' : null;
+  const pDanger = maxChance(area, 'pDanger');
+  if (pDanger !== null) {
+    const pExtreme = maxChance(area, 'pExtremeDanger');
+    if (byTier === 'emergency' && pExtreme < 0.3) byTier = pDanger >= 0.3 ? 'warning' : 'watch';
+    else if (byTier === 'warning' && pDanger < 0.3) byTier = 'watch';
+    else if (!byTier && pDanger >= 0.5) byTier = 'watch';
+  }
+  return byTier || byEhf ? higher(byTier, byEhf) : null;
 }
 
 /** Group registered locations into watched areas (no names, no contact details). */
@@ -108,9 +133,21 @@ export function headlineFor(area) {
   const at = (tiers) => area.hiDays.filter((d) => tiers.includes(d.tier)).map((d) => d.date);
   const extreme = at(['extreme_danger']);
   const danger = at(['danger', 'extreme_danger']);
+  // The ensemble's chance for the days named, e.g. "(24% chance)" or "(60-100% chance)".
+  const chance = (dates, key) => {
+    const ps = (area.ensemble?.days ?? []).filter((d) => dates.includes(d.date)).map((d) => Math.round(d[key] * 100));
+    if (!ps.length) return '';
+    const lo = Math.min(...ps);
+    const hi = Math.max(...ps);
+    return ` (${lo === hi ? lo : `${lo}-${hi}`}% chance)`;
+  };
   const parts = [];
-  if (extreme.length) parts.push(`extremely dangerous heat and humidity ${days(extreme)}`);
-  else if (danger.length) parts.push(`dangerous heat and humidity ${days(danger)}`);
+  if (extreme.length) parts.push(`extremely dangerous heat and humidity ${days(extreme)}${chance(extreme, 'pExtremeDanger')}`);
+  else if (danger.length) parts.push(`dangerous heat and humidity ${days(danger)}${chance(danger, 'pDanger')}`);
+  else {
+    const likely = (area.ensemble?.days ?? []).filter((d) => d.pDanger >= 0.5).map((d) => d.date);
+    if (likely.length) parts.push(`dangerous heat and humidity possible ${days(likely)}${chance(likely, 'pDanger')}`);
+  }
   const worst = area.ehf?.worst?.severity ?? 'none';
   const hot = (area.ehf?.days ?? []).filter((d) => d.severity !== 'none').map((d) => d.date);
   if (worst !== 'none' && hot.length) {
@@ -149,9 +186,11 @@ export function parseSentinelOutput(text, candidates) {
 }
 
 const NEW_CLIMATES_PER_RUN = 3;
+const ENSEMBLE_FETCHES_PER_RUN = 3; // Open-Meteo weighs ensemble calls heavily; refreshed in rotation
+const ENSEMBLE_MAX_AGE_MS = 6 * 3600_000; // ECMWF runs its ensemble twice a day
 const CARRY_MS = 3 * 3600_000;
 // Part of the fingerprint: changing how briefings are written triggers one fresh briefing.
-const BRIEFING_VERSION = 5;
+const BRIEFING_VERSION = 6;
 
 export async function runSentinel({ store, weather, climate, agentLog, converse, models, deadline = Date.now() + 240_000, nowMs = () => Date.now(), retryPauseMs = 20_000, allowModel = true }) {
   const areas = buildAreas(await store.listAllLocations());
@@ -169,6 +208,26 @@ export async function runSentinel({ store, weather, climate, agentLog, converse,
     } catch (err) {
       area.clim = null;
       failures.push({ areaId: area.areaId, place: area.place, stage: 'climate', message: err.message });
+    }
+  }
+
+  // Ensembles next, also with a budget: at most 3 downloads per run; each is kept for 6 hours.
+  let ensembleFetches = 0;
+  if (weather.getEnsemble) {
+    for (const area of areas) {
+      const key = `ens#${area.lat},${area.lon}`;
+      const cached = await agentLog.getState('sol', key).catch(() => null);
+      const age = cached?.fetchedAt ? nowMs() - Date.parse(cached.fetchedAt) : Infinity;
+      area.ensemble = age < 24 * 3600_000 ? cached : null;
+      if (age < ENSEMBLE_MAX_AGE_MS || ensembleFetches >= ENSEMBLE_FETCHES_PER_RUN || deadline - Date.now() < 60_000) continue;
+      ensembleFetches += 1;
+      try {
+        const fresh = { fetchedAt: new Date(nowMs()).toISOString(), model: 'ECMWF IFS ensemble (51 members)', days: exceedance(await weather.getEnsemble(area.lat, area.lon)) };
+        await agentLog.putState('sol', key, fresh);
+        area.ensemble = fresh;
+      } catch (err) {
+        failures.push({ areaId: area.areaId, place: area.place, stage: 'ensemble', message: err.message });
+      }
     }
   }
 
@@ -202,6 +261,12 @@ export async function runSentinel({ store, weather, climate, agentLog, converse,
 
   const nowIso = new Date(nowMs()).toISOString();
   const prev = await agentLog.getState('sol', 'latest');
+  // Quinn's verification of recent forecasts, per city: how far to trust this forecast here.
+  const audit = await agentLog.getState('quinn', 'latest').catch(() => null);
+  const skillFor = (place) => {
+    const c = audit?.cities?.find((x) => x.place === place);
+    return c?.lead1 ? { daysChecked: c.lead1.days, dayAheadPeakErrorC: c.lead1.maeC, dayAheadBiasC: c.lead1.biasC, dangerCallsOneDayAhead: c.danger } : 'not verified yet';
+  };
   const assessed = areas.filter((a) => !a.error);
   const candidates = assessed.filter((a) => a.ceiling);
   // An area that still could not be refreshed keeps its last good data (up to 3 hours, marked stale),
@@ -220,6 +285,7 @@ export async function runSentinel({ store, weather, climate, agentLog, converse,
       lat: Math.round(a.lat * 10) / 10, lon: Math.round(a.lon * 10) / 10, // city-level, for the situation board
       ehfWorst: a.ehf.worst ? { date: a.ehf.worst.date, ehf: a.ehf.worst.ehf, severity: a.ehf.worst.severity } : null,
       worstTier: a.hiDays.reduce((w, d) => (tierRank(d.tier) > tierRank(w) ? d.tier : w), 'lower'),
+      chanceOfDanger: maxChance(a, 'pDanger'),
       asOf: nowIso,
     })),
     ...carried,
@@ -268,7 +334,8 @@ export async function runSentinel({ store, weather, climate, agentLog, converse,
   };
   const enrich = (e) => {
     const a = candidates.find((c) => c.areaId === e.areaId);
-    return { ...e, trend: trendOf(a.place, e.level), headline: headlineFor(a), place: a.place, lat: a.lat, lon: a.lon, people: a.people, ehfWorst: a.ehf.worst, ceiling: a.ceiling };
+    const chance = maxChance(a, e.level === 'emergency' ? 'pExtremeDanger' : 'pDanger');
+    return { ...e, trend: trendOf(a.place, e.level), headline: headlineFor(a), place: a.place, lat: a.lat, lon: a.lon, people: a.people, ehfWorst: a.ehf.worst, ceiling: a.ceiling, chance, confidence: chance === null ? null : likelihood(chance) };
   };
   if (!allowModel) {
     // AI work is paused (operator or daily budget): the algorithm still reports every heat signal.
@@ -283,6 +350,8 @@ export async function runSentinel({ store, weather, climate, agentLog, converse,
     evidenceCeiling: c.ceiling, previousLevel: prevLevels.get(c.place) ?? null,
     excessHeatFactor: c.ehf.climatePending ? 'not available yet (local climatology still being computed)' : c.ehf.days.map((d) => ({ date: d.date, day: weekday(d.date), ehf: d.ehf, severity: d.severity })),
     heatIndexByDay: c.hiDays.map((d) => ({ ...d, day: weekday(d.date) })), tmaxTrendCPerDay: c.tmaxTrendCPerDay, tropicalNightsAhead: c.tropicalNights,
+    forecastTrackRecord: skillFor(c.place),
+    ensembleChanceByDay: c.ensemble?.days?.map((d) => ({ date: d.date, day: weekday(d.date), chanceOfDangerPct: Math.round(d.pDanger * 100), chanceOfExtremeDangerPct: Math.round(d.pExtremeDanger * 100), peakHeatIndexC: d.peakHeatIndexC })) ?? 'not available',
   });
   let plainWordsAsked = false;
   const run = await runAgent({
@@ -291,7 +360,7 @@ export async function runSentinel({ store, weather, climate, agentLog, converse,
       models,
       maxTurns: 5,
       maxTokens: 1500,
-      system: 'You are Sol, HeatShield\'s heat sentinel: an operational heat-health forecaster. You read algorithmic heat signals (Excess Heat Factor against local 1991-2020 climate, US National Weather Service heat-index tiers, temperature trend, tropical nights) and decide which areas need a heat watch, warning or emergency, whether each is new, escalating, steady or easing compared with your previous briefing, and you write a short situation briefing for community health workers. Use the tools. Never exceed an area\'s evidenceCeiling. Write for community health workers, not meteorologists: everyday full sentences about what people will face and when, for example "Dhaka is hotter than usual for this time of year until Thursday." or "Dubai has dangerous heat and humidity every afternoon this week." Never name an index or use acronyms, and never mention that a measure is absent or low. Be factual and calm; name places and weekdays or dates.',
+      system: 'You are Sol, HeatShield\'s heat sentinel: an operational heat-health forecaster. You read algorithmic heat signals (Excess Heat Factor against local 1991-2020 climate, US National Weather Service heat-index tiers, temperature trend, tropical nights) and decide which areas need a heat watch, warning or emergency, whether each is new, escalating, steady or easing compared with your previous briefing, and you write a short situation briefing for community health workers. Use the tools. Never exceed an area\'s evidenceCeiling. Write for community health workers, not meteorologists: everyday full sentences about what people will face and when, for example "Dhaka is hotter than usual for this time of year until Thursday." or "Dubai has dangerous heat and humidity every afternoon this week." Never name an index or use acronyms, and never mention that a measure is absent or low. When ensembleChanceByDay is given, say how likely the heat is in plain words (very likely from 90%, likely from 60%, possible from 30%). Be factual and calm; name places and weekdays or dates.',
       tools: [
         { name: 'list_heat_signals', description: 'All watched areas with a heat signal, with the algorithm\'s evidence.', inputSchema: { type: 'object', properties: {} }, handler: async () => ({ areas: candidates.map(signal) }) },
         {

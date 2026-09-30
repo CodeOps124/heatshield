@@ -25,9 +25,15 @@ export function createAgentsApi({ agentLog, control = null, nowMs = () => Date.n
     const dayAgo = now - 86_400_000;
     const everyone = [...ROSTER, ...WORKERS];
     const runs = Object.fromEntries(await Promise.all(everyone.map(async (a) => [a.id, await agentLog.listRuns(a.id, a.id === 'otto' ? 100 : 40)])));
-    const [sentinel, watchdog, ctl] = await Promise.all([
+    const [sentinel, watchdog, ctl, audit, coach] = await Promise.all([
       agentLog.getState('sol', 'latest'), agentLog.getState('otto', 'latest'), control ? control.load() : null,
+      agentLog.getState('quinn', 'latest'), agentLog.getState('iris', 'latest'),
     ]);
+    // A few entries of each non-empty word list (vocabulary only; nothing personal).
+    const wordLists = Object.fromEntries(await Promise.all(Object.keys(coach?.sizes ?? {}).map(async (lang) => {
+      const g = await agentLog.getState('iris', `glossary#${lang}`).catch(() => null);
+      return [lang, (g?.entries ?? []).slice(0, 3).map(({ wrong, use, meaning }) => ({ wrong, use, meaning }))];
+    })));
     const paused = ctl?.settings.paused ?? {};
     const aiPaused = Boolean(ctl && (ctl.settings.aiPaused || control.budgetTripped(ctl.budget)));
 
@@ -75,8 +81,8 @@ export function createAgentsApi({ agentLog, control = null, nowMs = () => Date.n
             briefedAt: sentinel.briefedAt ?? null,
             briefing: sentinel.briefing,
             areasScanned: sentinel.areasScanned,
-            events: (sentinel.events ?? []).map(({ place, level, trend, headline, reason, ehfWorst, lat, lon, stale }) => ({ place, level, trend, headline, reason, ehfWorst, lat: round1(lat), lon: round1(lon), stale: Boolean(stale) })),
-            areas: (sentinel.areas ?? []).map(({ place, ceiling, ehfWorst, worstTier, lat, lon, climatePending, stale, asOf }) => ({ place, ceiling, ehfWorst, worstTier, lat: round1(lat), lon: round1(lon), climatePending: Boolean(climatePending), stale: Boolean(stale), asOf: asOf ?? null })),
+            events: (sentinel.events ?? []).map(({ place, level, trend, headline, reason, ehfWorst, lat, lon, stale, chance, confidence }) => ({ place, level, trend, headline, reason, ehfWorst, lat: round1(lat), lon: round1(lon), stale: Boolean(stale), chance: chance ?? null, confidence: confidence ?? null })),
+            areas: (sentinel.areas ?? []).map(({ place, ceiling, ehfWorst, worstTier, lat, lon, climatePending, stale, asOf, chanceOfDanger }) => ({ place, ceiling, ehfWorst, worstTier, lat: round1(lat), lon: round1(lon), climatePending: Boolean(climatePending), stale: Boolean(stale), asOf: asOf ?? null, chanceOfDanger: chanceOfDanger ?? null })),
           }
         : null,
       watchdog: watchdog
@@ -91,6 +97,13 @@ export function createAgentsApi({ agentLog, control = null, nowMs = () => Date.n
             incident: watchdog.incident ? { title: watchdog.incident.title, severity: watchdog.incident.severity, summary: watchdog.incident.summary, likelyCause: watchdog.incident.likelyCause, recommendedAction: watchdog.incident.recommendedAction, at: watchdog.incident.updatedAt } : null,
           }
         : null,
+      auditor: audit
+        ? {
+            generatedAt: audit.generatedAt, windowDays: audit.windowDays, reference: audit.reference, note: audit.note, noteBy: audit.noteBy,
+            overall: audit.overall, cities: (audit.cities ?? []).map(({ place, lead1, lead3, danger }) => ({ place, lead1, lead3, danger })),
+          }
+        : null,
+      coach: coach ? { generatedAt: coach.generatedAt, reviewed: coach.reviewed, added: coach.added, rejected: coach.rejected, sizes: coach.sizes, samples: wordLists } : null,
       reviews,
       reviewStats24h: {
         total: reviewed.length,

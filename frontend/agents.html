@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Agent HQ · HeatShield</title>
-  <meta name="description" content="Six AI agents run HeatShield around the clock on AWS. Watch them work live, and give them a task.">
+  <meta name="description" content="Eight AI agents run HeatShield around the clock on AWS. Watch them work live, and give them a task.">
   <link rel="icon" href="/favicon.svg" type="image/svg+xml">
   <link rel="stylesheet" href="/css/styles.css">
   <script src="/js/theme.js"></script>
@@ -29,7 +29,7 @@
   <main id="main" class="wrap section">
     <p class="eyebrow-line"><span class="live-dot" aria-hidden="true"></span> Live from AWS</p>
     <h1>Agent HQ</h1>
-    <p class="lede section-sub">Six AI agents run HeatShield around the clock. Each one owns a real job, uses a real algorithm for the part that must be exact, and uses a model on Amazon Bedrock for the part that needs judgment. Everything you see here comes from their actual runs.</p>
+    <p class="lede section-sub">Eight AI agents run HeatShield around the clock. Each one owns a real job, uses a real algorithm for the part that must be exact, and uses a model on Amazon Bedrock for the part that needs judgment. Everything you see here comes from their actual runs.</p>
     <p class="hq-status" id="hq-status" aria-live="polite">Connecting to the agents…</p>
 
     <div class="hq-controls" role="group" aria-label="Give the agents work">
@@ -69,12 +69,15 @@
 
     <section class="section" aria-labelledby="how-agents">
       <h2 id="how-agents" class="section-title">How the agents work together</h2>
-      <ol class="steps">
-        <li><span class="n">Every hour · Sol</span><h3>Finds heatwaves</h3><p>Compares the next days with each area's own 1991–2020 climate (Excess Heat Factor) and the heat index, then briefs the team. The algorithm caps how severe Sol may call an event.</p></li>
-        <li><span class="n">Every plan · Mira</span><h3>Writes the advice</h3><p>Retrieves only the relevant vetted CDC/NIOSH facts (BM25) and writes a plan in the person's language.</p></li>
-        <li><span class="n">Every plan · Lexi + Vera</span><h3>Check it before anyone sees it</h3><p>Lexi verifies the language (naive-Bayes language ID, back-translation); Vera checks safety (rule detectors, rubric). Blocking issues go back to Mira.</p></li>
-        <li><span class="n">Every 3 hours · Kai</span><h3>Plans check-ins</h3><p>Scores urgency and schedules who a group leader should contact first, earliest deadline first, across time zones.</p></li>
-        <li><span class="n">Every 15 minutes · Otto</span><h3>Keeps it up</h3><p>Probes the live site and the weather provider, runs control charts on latency, checks every agent's heartbeat, and writes incident reports.</p></li>
+      <ol class="steps four">
+        <li><span class="n">Every hour · Sol</span><h3>Finds heatwaves</h3><p>Compares the next days with each area's own 1991–2020 climate (Excess Heat Factor), the heat index, and 51 ensemble forecasts for the chance of Danger. The algorithm caps how severe Sol may call an event.</p></li>
+        <li><span class="n">Every day · Quinn</span><h3>Audits the forecast</h3><p>Scores the last 14 days of forecasts in each city (error, bias, Danger hits and misses), so Sol knows how far to trust them.</p></li>
+        <li><span class="n">Every plan · Mira</span><h3>Writes the advice</h3><p>Retrieves only the relevant vetted CDC/NIOSH facts (BM25) and writes a plan in the person's language, using Iris's word list.</p></li>
+        <li><span class="n">Every plan · Lexi</span><h3>Checks the language</h3><p>Naive-Bayes language ID, then a literal back-translation. Invented or misspelled words go back to Mira.</p></li>
+        <li><span class="n">Every 3 hours · Kai</span><h3>Plans check-ins</h3><p>Scores urgency and schedules who a group leader should contact first, earliest deadline first, across time zones, and finds the safest shift for outdoor workers.</p></li>
+        <li><span class="n">Every day · Iris</span><h3>Teaches the team</h3><p>Turns Lexi's corrections into a checked word list for each language, so Mira stops repeating the same mistakes.</p></li>
+        <li><span class="n">Every plan · Vera</span><h3>Checks the safety</h3><p>Rule detectors, a rubric against the vetted library, and a second reading of any harm objection before it can block.</p></li>
+        <li><span class="n">Every 15 minutes · Otto</span><h3>Keeps it up</h3><p>Probes the site, runs control charts on latency, re-runs a stalled agent, enforces the AI budget, and writes incident reports.</p></li>
       </ol>
       <p class="hint mt-16">Models: Amazon Nova 2 Lite for Sol, Kai, Otto and (until Anthropic access is enabled on this account) Mira; Amazon Nova Pro for the reviewers, so a different model checks the writer's work (Nova Pro writes a plan only if Nova 2 Lite fails twice). Names like "Sol" are roles, not people; the agents give safety information, not medical care.</p>
     </section>

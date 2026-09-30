@@ -160,6 +160,31 @@ function specialFor(a) {
         (w.issues ?? []).filter((i) => i.severity === 'info').map((i) => el('p', { class: 'hint' }, `Note: ${i.detail}`)),
         w.incident ? el('div', { class: 'callout info mt-6' }, el('p', {}, el('strong', {}, `Last incident: ${w.incident.title}`), `${w.incident.summary} Likely cause: ${w.incident.likelyCause}`)) : null);
     }
+    case 'quinn': {
+      const q = data.auditor;
+      if (!q) return el('div', { class: 'panel-block' }, el('p', { class: 'hint' }, 'Quinn audits the forecast once a day at 01:30 UTC; the first report appears after the first run.'));
+      return el('div', { class: 'panel-block' }, el('h3', {}, `Forecast track record, last ${q.windowDays} days`),
+        el('p', {}, q.note),
+        el('p', { class: 'hint' }, `Written by ${q.noteBy === 'model' ? 'Quinn (numbers checked by code)' : 'code'}. Compared with ${q.reference}.`),
+        el('div', { class: 'table-scroll' }, el('table', { class: 'data-table' },
+          el('thead', {}, el('tr', {}, el('th', {}, 'City'), el('th', { class: 'num' }, 'Day-ahead error'), el('th', { class: 'num' }, 'Bias'), el('th', { class: 'num' }, 'Right tier'), el('th', {}, 'Danger calls'))),
+          el('tbody', {}, q.cities.map((c) => el('tr', {},
+            el('td', {}, c.place.split(',')[0]),
+            el('td', { class: 'num' }, `${c.lead1.maeC} °C`),
+            el('td', { class: 'num' }, `${c.lead1.biasC > 0 ? '+' : ''}${c.lead1.biasC} °C`),
+            el('td', { class: 'num' }, `${Math.round(c.lead1.tierAgreement * 100)}%`),
+            el('td', {}, `${c.danger.hits} right · ${c.danger.misses} missed · ${c.danger.falseAlarms} false`)))))));
+    }
+    case 'iris': {
+      const c = data.coach;
+      if (!c) return el('div', { class: 'panel-block' }, el('p', { class: 'hint' }, 'Iris coaches once a day at 02:30 UTC; the first word lists appear after the first run.'));
+      const langs = Object.entries(c.sizes ?? {});
+      return el('div', { class: 'panel-block' }, el('h3', {}, 'Mira\'s word lists'),
+        el('p', {}, `From ${c.reviewed} corrections in the last 7 days, Iris added ${Object.values(c.added ?? {}).reduce((a, b) => a + b, 0)} word(s) and rejected ${c.rejected} on a second look.`),
+        langs.length ? el('ul', { class: 'plain-list' }, langs.map(([lang, n]) => el('li', {},
+          el('strong', {}, `${LANGUAGES[lang]?.native ?? lang}: ${n} word(s)`),
+          (c.samples?.[lang] ?? []).map((e) => el('div', { class: 'hint', lang, dir: LANGUAGES[lang]?.dir ?? 'ltr' }, `"${e.use}" (${e.meaning}), not "${e.wrong}"`))))) : el('p', { class: 'hint' }, 'No word lists yet.'));
+    }
     default: return null;
   }
 }

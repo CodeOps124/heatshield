@@ -6,11 +6,13 @@
  *     NOT a trained model — there is no labelled outcome data, and we say so)
  *   - earliest-deadline-first (EDF) scheduling: a check-in is due before the person's risky
  *     window starts, compared in absolute time because members live in different time zones
+ *   - safest-shift search for outdoor workers: the 8-hour shift (starting 04:00-10:00 local, next
+ *     36 hours) with the fewest Danger hours, then the least heat above Extreme Caution
  * The algorithm owns WHO and BY WHEN. The model writes WHAT to say and why, per person, from a
  * pseudonymous roster (no names, no contact details are sent to the model).
  */
 import { runAgent, extractJson } from '../agent-runtime.mjs';
-import { tierRank, TIER_LABELS, PROFILES } from '../heat.mjs';
+import { tierRank, TIER_LABELS, PROFILES, heatIndexF, tierForHeatIndexF, cToF, fToC } from '../heat.mjs';
 import { logistic } from '../algorithms/stats.mjs';
 import { riskForMany } from '../risk-batch.mjs';
 
@@ -46,7 +48,7 @@ export function urgencyScore(f, W = URGENCY_WEIGHTS) {
 }
 
 /** Who needs a check-in, how urgent, and by when — ordered earliest deadline first. */
-export function buildCheckInSchedule(members, risks, nowMs) {
+export function buildCheckInSchedule(members, risks, nowMs, shifts = new Map()) {
   const rows = [];
   members.forEach((m, i) => {
     const r = risks[i];
@@ -70,11 +72,51 @@ export function buildCheckInSchedule(members, risks, nowMs) {
       deadline,
       checkInBy: deadline - nowMs <= 5 * 60_000 ? 'now' : `${localClock(deadline, offset)} their time`,
       hasEmail: !f.noEmail,
+      shift: shifts.get(m.locationId) ?? null,
     });
   });
   // Sort on the exact score: sorting on the rounded one tied everyone at 0.98 and fell back to input order.
   rows.sort((a, b) => a.deadline - b.deadline || b.score - a.score);
   return rows.map(({ score, ...row }, i) => ({ ...row, urgency: Math.round(score * 100) / 100, order: i + 1, ref: `M${i + 1}` }));
+}
+
+const hhmm = (iso) => iso.slice(11, 16);
+const plusHours = (iso, h) => new Date(Date.parse(`${iso}:00Z`) + h * 3600_000).toISOString().slice(0, 16);
+
+/**
+ * The safest `length`-hour shift in `hours` (local, consecutive, from now on), starting between
+ * `earliest` and `latest` o'clock: fewest Danger hours first, then the least heat above Extreme
+ * Caution (degree-hours), then the earliest start. Compared with a standard shift on the same day.
+ * Returns null when no shift fits, or when even the standard shift stays below Extreme Caution.
+ */
+export function bestShift(hours, { length = 8, earliest = 4, latest = 10, standardStart = 7 } = {}) {
+  const scored = hours.map((h) => {
+    const hiF = heatIndexF(cToF(h.tempC), h.rh);
+    return { time: h.time, hiC: fToC(hiF), tier: tierForHeatIndexF(hiF) };
+  });
+  const cost = (start) => {
+    const slice = scored.slice(start, start + length);
+    if (slice.length < length) return null;
+    // Consecutive hours only (a gap in the forecast would make the window meaningless).
+    if (slice.some((h, i) => i > 0 && Date.parse(`${h.time}:00Z`) - Date.parse(`${slice[i - 1].time}:00Z`) !== 3600_000)) return null;
+    return {
+      start: slice[0].time,
+      dangerHours: slice.filter((h) => tierRank(h.tier) >= tierRank('danger')).length,
+      extremeCautionHours: slice.filter((h) => tierRank(h.tier) === tierRank('extreme_caution')).length,
+      excess: slice.reduce((s, h) => s + Math.max(0, h.hiC - 32.2), 0),
+    };
+  };
+  const options = scored.map((h, i) => ({ h, i }))
+    .filter(({ h }) => { const hour = Number(h.time.slice(11, 13)); return hour >= earliest && hour <= latest; })
+    .map(({ i }) => cost(i)).filter(Boolean);
+  if (!options.length) return null;
+  const best = options.reduce((a, b) => (b.dangerHours < a.dangerHours || (b.dangerHours === a.dangerHours && b.excess < a.excess - 1e-9) ? b : a));
+  const day = best.start.slice(0, 10);
+  const stdIndex = scored.findIndex((h) => h.time === `${day}T${String(standardStart).padStart(2, '0')}:00`);
+  const standard = stdIndex >= 0 ? cost(stdIndex) : null;
+  if (standard && standard.dangerHours === 0 && standard.extremeCautionHours === 0) return null; // the choice does not matter
+  const view = (w) => w && { start: hhmm(w.start), end: hhmm(plusHours(w.start, length)), dangerHours: w.dangerHours, extremeCautionHours: w.extremeCautionHours };
+  return { day, length, best: view(best), standard: view(standard) };
 }
 
 const templateAction = (row) => `Contact them ${row.checkInBy === 'now' ? 'now' : `before ${row.checkInBy}`}: ask how they feel, and go through their plan for ${row.riskyHours ?? 'the hot hours'}.`;
@@ -104,7 +146,18 @@ async function planGroup({ group, store, weather, agentLog, converse, models, no
   const members = await store.listGroupMembers(group.groupId);
   if (members.length === 0) return null; // nothing to plan for an empty group
   const risks = await riskForMany(weather, members);
-  const schedule = buildCheckInSchedule(members, risks, nowMs());
+  // Outdoor workers: the safest shift from the full forecast (the weather client has it cached).
+  const shifts = new Map();
+  for (const m of members.filter((x) => x.profile === 'outdoor_worker')) {
+    try {
+      const f = await weather.getForecast(m.lat, m.lon);
+      const nowKey = f.current?.time?.slice(0, 13) ?? '';
+      const ahead = f.hourly.filter((h) => h.time.slice(0, 13) >= nowKey).slice(0, 36);
+      const shift = bestShift(ahead);
+      if (shift) shifts.set(m.locationId, shift);
+    } catch { /* no shift advice without a forecast */ }
+  }
+  const schedule = buildCheckInSchedule(members, risks, nowMs(), shifts);
   if (schedule.length === 0) {
     const plan = { allClear: true, summary: `Nobody in "${group.name}" reaches their alert level in the next 24 hours.`, checkIns: [], teamNote: '', members: members.length, model: null };
     await agentLog.putState('kai', `group#${group.groupId}`, plan);
@@ -114,7 +167,7 @@ async function planGroup({ group, store, weather, agentLog, converse, models, no
   const forModel = schedule.slice(0, MAX_FOR_MODEL);
   const cells = new Set(members.map((m) => `${m.lat},${m.lon}`));
   const events = (sentinel?.events ?? []).filter((e) => cells.has(`${e.lat},${e.lon}`)).map(({ place, level, trend, headline }) => ({ place, level, trend, headline }));
-  const shape = (rows) => rows.map(({ locationId, order, checkInBy, urgency, action, reason, next12Tier, riskyHours, writtenBy }) => ({ locationId, order, checkInBy, urgency, action, reason, tier: next12Tier, riskyHours, writtenBy }));
+  const shape = (rows) => rows.map(({ locationId, order, checkInBy, urgency, action, reason, next12Tier, riskyHours, writtenBy, shift }) => ({ locationId, order, checkInBy, urgency, action, reason, tier: next12Tier, riskyHours, writtenBy, shift: shift ?? null }));
 
   if (!allowModel) {
     // AI work is paused: the algorithm's order and deadlines stand, with template wording.
@@ -137,7 +190,7 @@ async function planGroup({ group, store, weather, agentLog, converse, models, no
       models,
       maxTurns: 4,
       maxTokens: 1800,
-      system: 'You are Kai, HeatShield\'s community coordinator. You help one group leader (a foreman, teacher or outreach worker) decide how to check on the people in their group during heat. The check-in order and deadlines are already computed by an urgency score and earliest-deadline-first scheduling; do not change them. For each person write one concrete, kind, practical action for the leader (what to ask or do, fitted to the person\'s profile and risky hours) and a short reason. Base advice on CDC/NIOSH heat guidance: water and shade breaks, buddy checks, checking older adults twice a day, cool places, never leaving children in vehicles, and calling the local emergency number for heat-stroke signs. Use the tools.',
+      system: 'You are Kai, HeatShield\'s community coordinator. You help one group leader (a foreman, teacher or outreach worker) decide how to check on the people in their group during heat. The check-in order and deadlines are already computed by an urgency score and earliest-deadline-first scheduling; do not change them. For each person write one concrete, kind, practical action for the leader (what to ask or do, fitted to the person\'s profile and risky hours) and a short reason. When a person has a safestShift, suggest moving their work to it if it avoids Danger hours. Base advice on CDC/NIOSH heat guidance: water and shade breaks, buddy checks, checking older adults twice a day, cool places, never leaving children in vehicles, and calling the local emergency number for heat-stroke signs. Use the tools.',
       tools: [
         {
           name: 'get_checkin_schedule',
@@ -145,8 +198,9 @@ async function planGroup({ group, store, weather, agentLog, converse, models, no
           inputSchema: { type: 'object', properties: {} },
           handler: async () => ({
             group: group.name,
-            people: forModel.map(({ ref, profile, place, localTime, nowTier, next12Tier, riskyHours, urgency, checkInBy, hasEmail }) => ({
+            people: forModel.map(({ ref, profile, place, localTime, nowTier, next12Tier, riskyHours, urgency, checkInBy, hasEmail, shift }) => ({
               ref, profile: PROFILES[profile]?.label ?? profile, place, localTime, nowTier, next12Tier, riskyHours, urgency, checkInBy, gets_email_alerts: hasEmail,
+              ...(shift ? { safestShift: shift } : {}),
             })),
           }),
         },

@@ -11,7 +11,9 @@ import { createControl, runUnlessPaused } from '../lib/control.mjs';
 import { runSentinel, createClimateService } from '../lib/agents/sentinel.mjs';
 import { runCoordinator } from '../lib/agents/coordinator.mjs';
 import { runWatchdog } from '../lib/agents/watchdog.mjs';
-import { dynamo, converse, tables, agentModels, logs, opsPublish, invokeAgentAsync, failedRuns } from '../lib/aws.mjs';
+import { runAuditor } from '../lib/agents/auditor.mjs';
+import { runCoach } from '../lib/agents/coach.mjs';
+import { dynamo, converse, tables, agentModels, reviewerModels, logs, opsPublish, invokeAgentAsync, failedRuns } from '../lib/aws.mjs';
 import { toAscii } from '../lib/util.mjs';
 
 const store = createStore({ db: dynamo, tables });
@@ -39,6 +41,21 @@ export const coordinator = async (event = {}, context) => guarded('kai', event, 
   const allowModel = (await control.generation('kai')).ok;
   const result = await recorded(agentLog, 'kai', event.trigger ?? 'schedule', () =>
     runCoordinator({ store, weather, agentLog, converse, models: agentModels, groupId, deadline: deadlineFor(event, context), allowModel }));
+  return { outcome: result.outcome, summary: result.summary };
+});
+
+export const auditor = async (event = {}, context) => guarded('quinn', event, async () => {
+  const allowModel = (await control.generation('quinn')).ok;
+  const result = await recorded(agentLog, 'quinn', event.trigger ?? 'schedule', () =>
+    runAuditor({ agentLog, weather, converse, models: agentModels, deadline: deadlineFor(event, context), allowModel }));
+  return { outcome: result.outcome, summary: result.summary };
+});
+
+// Iris checks words in 13 languages, so she uses the reviewers' model (Amazon Nova Pro).
+export const coach = async (event = {}, context) => guarded('iris', event, async () => {
+  const allowModel = (await control.generation('iris')).ok;
+  const result = await recorded(agentLog, 'iris', event.trigger ?? 'schedule', () =>
+    runCoach({ agentLog, converse, models: reviewerModels, deadline: deadlineFor(event, context), allowModel }));
   return { outcome: result.outcome, summary: result.summary };
 });
 

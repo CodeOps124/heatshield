@@ -1,4 +1,4 @@
-// Agent HQ — a pixel-art office where HeatShield's six agents work. Everything is drawn in code
+// Agent HQ — a pixel-art office where HeatShield's eight agents work. Everything is drawn in code
 // (original art, no image assets; CSP-friendly). The scene is a 320×192 canvas scaled up with
 // integer scaling and `image-rendering: pixelated`. What each agent is DOING comes from the live
 // agent log (GET /api/agents) and from real runs a visitor triggers — the art only shows it.
@@ -7,13 +7,17 @@ export const OFFICE_W = 320;
 export const OFFICE_H = 192;
 
 const DESK_TOP = [104, 160];
+// Two rows of four desks (68 px wide, 8 px apart). The forecast team sits together (Sol, Quinn),
+// Vera sits right under Mira so drafts travel a short way, and Otto keeps his server rack on the right.
 export const SEATS = {
-  sol: { cx: 60, row: 0 },
-  mira: { cx: 160, row: 0 },
-  lexi: { cx: 260, row: 0 },
-  vera: { cx: 60, row: 1 },
-  kai: { cx: 160, row: 1 },
-  otto: { cx: 260, row: 1 },
+  sol: { cx: 38, row: 0 },
+  quinn: { cx: 114, row: 0 },
+  mira: { cx: 190, row: 0 },
+  lexi: { cx: 266, row: 0 },
+  kai: { cx: 38, row: 1 },
+  iris: { cx: 114, row: 1 },
+  vera: { cx: 190, row: 1 },
+  otto: { cx: 266, row: 1 },
 };
 
 const LOOKS = {
@@ -23,6 +27,8 @@ const LOOKS = {
   vera: { skin: '#e0ac69', skinShade: '#c48f4f', hair: 'bun', hairColor: '#a4a9b0', shirt: '#2f4b7c', shirtShade: '#233a61', acc: ['glasses', 'badge'] },
   kai: { skin: '#6b4423', skinShade: '#553518', hair: 'short', hairColor: '#20140c', shirt: '#3a9d5d', shirtShade: '#2b7a47', acc: ['headset'], accent: '#fab219' },
   otto: { skin: '#f5cba7', skinShade: '#ddb08a', hair: 'buzz', hairColor: '#d8b24a', shirt: '#3d3f4f', shirtShade: '#2c2e3a', acc: ['hoodie'], accent: '#3987e5' },
+  quinn: { skin: '#d8a47f', skinShade: '#bf8a63', hair: 'short', hairColor: '#6b4e2e', shirt: '#0f766e', shirtShade: '#0b5c56', acc: ['glasses'] },
+  iris: { skin: '#a86b3c', skinShade: '#8c5630', hair: 'long', hairColor: '#2d1b12', shirt: '#be185d', shirtShade: '#9d174d', acc: ['badge'] },
 };
 
 const INK = '#1b1b2f';
@@ -351,6 +357,26 @@ export function createOffice(canvas, { reducedMotion = false } = {}) {
         }
         break;
       }
+      case 'quinn': { // verification scatter: forecast vs what happened, around the diagonal
+        rect(x, y, w, h, '#0f172a');
+        for (let c = 0; c < w - 1; c += 2) px(x + c, y + h - 1 - Math.floor((c * (h - 1)) / (w - 1)), '#334155');
+        for (let k = 0; k < 6; k += 1) {
+          const c = (k * 5 + (busy ? s : 0)) % (w - 1);
+          const jitter = ((k * 7 + s) % 3) - 1;
+          px(x + c, Math.min(y + h - 1, Math.max(y, y + h - 1 - Math.floor((c * (h - 1)) / (w - 1)) + jitter)), '#2dd4bf');
+        }
+        break;
+      }
+      case 'iris': { // word list: wrong word crossed out, right word ticked
+        rect(x, y, w, h, '#fdf2f8');
+        for (let l = 0; l < 4; l += 1) {
+          const hl = busy && s % 4 === l;
+          if (hl) rect(x, y + l * 2 + 1, w, 1, '#fbcfe8');
+          rect(x + 1, y + 1 + l * 2, 4, 1, '#f87171');
+          rect(x + 7, y + 1 + l * 2, 5, 1, '#16a34a');
+        }
+        break;
+      }
       case 'otto': { // latency chart + status
         rect(x, y, w, h, '#020617');
         for (let c = 0; c < w - 1; c += 1) {
@@ -375,6 +401,8 @@ export function createOffice(canvas, { reducedMotion = false } = {}) {
       case 'lexi': rect(cx + 10, top - 6, 5, 5, '#3987e5'); rect(cx + 11, top - 5, 2, 2, '#3a9d5d'); rect(cx + 12, top - 1, 1, 1, '#6d4530'); break; // globe
       case 'vera': rect(cx + 9, top - 5, 7, 5, '#f8fafc'); rect(cx + 12, top - 4, 1, 3, '#ef4444'); rect(cx + 11, top - 3, 3, 1, '#ef4444'); break; // first-aid box
       case 'kai': rect(cx + 10, top - 2, 5, 2, '#111827'); rect(cx + 11, top - 2, 3, 1, '#3987e5'); break; // phone
+      case 'quinn': rect(cx + 10, top - 8, 6, 8, '#a16207'); rect(cx + 11, top - 7, 4, 6, '#f8fafc'); rect(cx + 12, top - 5, 2, 1, '#0f766e'); rect(cx + 12, top - 3, 2, 1, '#0f766e'); break; // clipboard
+      case 'iris': rect(cx + 9, top - 2, 7, 2, '#be185d'); rect(cx + 10, top - 4, 6, 2, '#7b5ea7'); rect(cx + 9, top - 6, 7, 2, '#0f766e'); break; // books
       case 'otto': { // server rack with blinking LEDs
         const rx = cx + 36;
         rect(rx, top - 30, 18, 52, '#1f2937');

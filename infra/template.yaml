@@ -540,6 +540,61 @@ Resources:
             RetryPolicy: { MaximumRetryAttempts: 0 }
             Input: !Sub '{"siteUrl":"https://${Distribution.DomainName}"}'
 
+  AuditorFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      Description: Quinn - Forecast Auditor agent. Verifies recent heat forecasts per city against the model analysis
+      Handler: handlers/agents.auditor
+      Timeout: 120
+      EventInvokeConfig: # retry once, then the dead-letter queue
+        MaximumRetryAttempts: 1
+        DestinationConfig:
+          OnFailure: { Type: SQS, Destination: !GetAtt FailedRunsQueue.Arn }
+      Policies:
+        - DynamoDBCrudPolicy: { TableName: !Ref AgentLogTable }
+        - !Ref BedrockInvokePolicy
+        - SQSSendMessagePolicy: { QueueName: !GetAtt FailedRunsQueue.QueueName }
+      Events:
+        Daily:
+          Type: ScheduleV2
+          Properties:
+            ScheduleExpression: cron(30 1 * * ? *)
+            State: !Ref AlertScheduleState
+            RetryPolicy: { MaximumRetryAttempts: 0 }
+
+  CoachFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      Description: Iris - Learning Coach agent. Turns the language reviewer corrections into word lists for the writer
+      Handler: handlers/agents.coach
+      Timeout: 180
+      EventInvokeConfig: # retry once, then the dead-letter queue
+        MaximumRetryAttempts: 1
+        DestinationConfig:
+          OnFailure: { Type: SQS, Destination: !GetAtt FailedRunsQueue.Arn }
+      Policies:
+        - DynamoDBCrudPolicy: { TableName: !Ref AgentLogTable }
+        - !Ref BedrockInvokePolicy
+        - SQSSendMessagePolicy: { QueueName: !GetAtt FailedRunsQueue.QueueName }
+      Events:
+        Daily:
+          Type: ScheduleV2
+          Properties:
+            ScheduleExpression: cron(30 2 * * ? *)
+            State: !Ref AlertScheduleState
+            RetryPolicy: { MaximumRetryAttempts: 0 }
+
+  AuditorLogs:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub /aws/lambda/${AuditorFunction}
+      RetentionInDays: 14
+  CoachLogs:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub /aws/lambda/${CoachFunction}
+      RetentionInDays: 14
+
   SentinelLogs:
     Type: AWS::Logs::LogGroup
     Properties:

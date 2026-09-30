@@ -10,6 +10,8 @@ export const AGENT_META = {
   vera: { name: 'Vera', role: 'Safety Reviewer', color: '#2f4b7c' },
   kai: { name: 'Kai', role: 'Community Coordinator', color: '#3a9d5d' },
   otto: { name: 'Otto', role: 'Ops Watchdog', color: '#3987e5' },
+  quinn: { name: 'Quinn', role: 'Forecast Auditor', color: '#0f766e' },
+  iris: { name: 'Iris', role: 'Learning Coach', color: '#be185d' },
 };
 
 // Bubbles are speech, not reports: short and cut at a word. The activity feed has the full text.
@@ -30,7 +32,7 @@ function age(iso) {
 
 export function mountOffice(root, { compact = false, onSelect = null } = {}) {
   const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-  const canvas = el('canvas', { class: 'office-canvas', role: 'img', 'aria-label': 'Pixel-art office where HeatShield\'s six AI agents work' });
+  const canvas = el('canvas', { class: 'office-canvas', role: 'img', 'aria-label': 'Pixel-art office where HeatShield\'s eight AI agents work' });
   const overlay = el('div', { class: 'office-overlay' });
   const stage = el('div', { class: `office-stage${compact ? ' compact' : ''}` }, canvas, overlay);
   clear(root).append(stage);

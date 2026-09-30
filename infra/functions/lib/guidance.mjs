@@ -112,7 +112,7 @@ export function cacheKeyFor(input) {
 
 export const factsAsList = (facts) => facts.map((f) => `- ${f.text} (${f.source})`).join('\n');
 
-export function buildSystemPrompt(languageName, facts = [...FACTS]) {
+export function buildSystemPrompt(languageName, facts = [...FACTS], wordList = '') {
   return `You are Mira, HeatShield's health advisor. You write heat-safety action messages for a free public heat early-warning service.
 Each message is for one specific person and must be based only on the forecast facts you are given.
 
@@ -131,7 +131,10 @@ Reply with ONLY a JSON object and nothing else, in exactly this shape:
 - headline: one short sentence (at most 15 words) telling them how serious the heat is for them today.
 - actions: exactly 3 short, concrete steps for the coming hours (at most 30 words each), most important first.
 - seekHelp: one sentence naming heat-stroke warning signs (such as confusion or fainting) and telling them to call their local emergency number (written in ${languageName}).
-All text must be in ${languageName}.`;
+All text must be in ${languageName}.${wordList ? `
+
+Words HeatShield's language reviewer has corrected in your earlier ${languageName} drafts. Use the right word:
+${wordList}` : ''}`;
 }
 
 const tierText = (t) => (t ? TIER_LABELS[t] : 'not available');
@@ -216,12 +219,12 @@ const summarizeReview = (r) =>
  * @param {object} [deps.agentLog]   records each agent's run for the Agent Console
  */
 export function createGuidanceService({
-  converse, cache, models, log, reviewers = null, agentLog = null, gate = null,
+  converse, cache, models, log, reviewers = null, agentLog = null, gate = null, glossary = null,
   nowSeconds = () => Math.floor(Date.now() / 1000), nowMs = () => Date.now(),
 }) {
   const record = (agent, run) => (agentLog ? agentLog.recordRun(agent, run).catch((err) => log.warn('agent_log_failed', { agent, message: err.message })) : null);
 
-  async function write(input, facts, deadline, feedback) {
+  async function write(input, facts, deadline, feedback, wordList = '') {
     let lastErr;
     for (const modelId of models.filter(Boolean)) {
       // A model that answers with unusable text (a runaway reply cut off at the token limit, or broken
@@ -235,7 +238,7 @@ export function createGuidanceService({
           const res = await converse(
             {
               modelId,
-              system: [{ text: buildSystemPrompt(LANGUAGES[input.language].name, facts) }],
+              system: [{ text: buildSystemPrompt(LANGUAGES[input.language].name, facts, wordList) }],
               messages: [{ role: 'user', content: [{ text: buildUserPrompt(input, feedback) }] }],
               inferenceConfig: { maxTokens: 1500, temperature: 0.3 },
             },
@@ -367,9 +370,11 @@ export function createGuidanceService({
       if (!allowed.ok) return fallback(allowed.reason);
     }
 
+    // Iris's word list for this language (terms the reviewers corrected before), if there is one.
+    const wordList = glossary ? await glossary(language).catch(() => '') : '';
     let draft;
     try {
-      draft = await write(input, facts, deadline);
+      draft = await write(input, facts, deadline, null, wordList);
     } catch {
       return fallback('writer_unavailable');
     }
@@ -393,7 +398,7 @@ export function createGuidanceService({
     while (verdict.rejected && revisions < MAX_REVISIONS && deadline - nowMs() > 8_000) {
       const issues = [...(verdict.language.issues ?? []), ...(verdict.safety.issues ?? [])];
       try {
-        draft = await write(input, facts, deadline, { draft: draft.guidance, issues });
+        draft = await write(input, facts, deadline, { draft: draft.guidance, issues }, wordList);
         revisions += 1;
         verdict = await review(draft.guidance, ctx);
         noteRound(verdict);
