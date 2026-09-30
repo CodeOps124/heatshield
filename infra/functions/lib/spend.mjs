@@ -4,6 +4,8 @@
  *   Amazon Nova 2 Lite  0.33 in / 2.75 out
  *   Amazon Nova Pro     0.80 in / 3.20 out
  *   Claude Haiku 4.5    1.10 in / 5.50 out  (AmazonBedrockService, anthropic.claude-haiku-4-5, standard)
+ * Amazon Polly (US$ per million characters): neural 16, standard 4. Polly reports the billed
+ * characters of every request, and "Listen" records them.
  */
 export const PRICES = Object.freeze({
   'us.amazon.nova-2-lite-v1:0': { input: 0.33, output: 2.75 },
@@ -11,13 +13,21 @@ export const PRICES = Object.freeze({
   'us.anthropic.claude-haiku-4-5-20251001-v1:0': { input: 1.1, output: 5.5 },
 });
 
+export const CHARACTER_PRICES = Object.freeze({ 'polly:neural': 16, 'polly:standard': 4 });
+
 /** Agents whose runs can call a model. (The Dispatcher and the plans log record no tokens.) */
 export const MODEL_AGENTS = Object.freeze(['sol', 'mira', 'lexi', 'vera', 'kai', 'otto', 'quinn', 'iris']);
+/** Everything that spends on AI: the agents, and plans read aloud. */
+export const SPEND_SOURCES = Object.freeze([...MODEL_AGENTS, 'voice']);
 
 const round4 = (x) => Math.round(x * 10_000) / 10_000;
 
 /** US$ for one run, or null when the model has no known price. */
 export function runCost(run) {
+  if (run.characters) {
+    const perMillion = CHARACTER_PRICES[run.model];
+    return perMillion ? (run.characters * perMillion) / 1e6 : null;
+  }
   const tokensIn = run.inputTokens ?? 0;
   const tokensOut = run.outputTokens ?? 0;
   if (!tokensIn && !tokensOut) return 0;
@@ -25,7 +35,7 @@ export function runCost(run) {
   return p ? (tokensIn * p.input + tokensOut * p.output) / 1e6 : null;
 }
 
-export async function measureSpend({ agentLog, sinceMs, agents = MODEL_AGENTS }) {
+export async function measureSpend({ agentLog, sinceMs, agents = SPEND_SOURCES }) {
   const sinceIso = new Date(sinceMs).toISOString();
   const byAgent = {};
   const byModel = {};
@@ -45,6 +55,7 @@ export async function measureSpend({ agentLog, sinceMs, agents = MODEL_AGENTS })
       m.usd += usd;
       m.inputTokens += r.inputTokens ?? 0;
       m.outputTokens += r.outputTokens ?? 0;
+      if (r.characters) m.characters = (m.characters ?? 0) + r.characters;
       byModel[r.model] = m;
     }
   }

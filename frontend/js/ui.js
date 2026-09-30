@@ -1,5 +1,6 @@
 // Shared UI: a tiny DOM builder (text is ALWAYS set via textContent — API data is untrusted),
 // icons, tier badges, and the risk / guidance / outlook renderers used by every page.
+import { api, qs } from './api.js';
 
 export const TIER_LABELS = {
   lower: 'Lower risk',
@@ -153,6 +154,7 @@ const ICONS = {
   trash: [['path', { d: 'M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13' }]],
   arrow: [['path', { d: 'M5 12h14M13 6l6 6-6 6' }]],
   info: [['circle', { cx: 12, cy: 12, r: 9 }], ['path', { d: 'M12 11v6M12 7.3v.2' }]],
+  speaker: [['path', { d: 'M11 5 6 9H3v6h3l5 4z' }], ['path', { d: 'M15.5 8.5a5 5 0 0 1 0 7' }], ['path', { d: 'M18.5 5.5a9 9 0 0 1 0 13' }]],
   phone: [['path', { d: 'M5 3.5h3.5l1.8 4.5-2.3 1.5a11 11 0 0 0 6.5 6.5l1.5-2.3 4.5 1.8V19a2 2 0 0 1-2 2A16.5 16.5 0 0 1 3 5.5a2 2 0 0 1 2-2z' }]],
   refresh: [['path', { d: 'M20 11a8 8 0 0 0-14.3-4.9L4 8M4 3v5h5M4 13a8 8 0 0 0 14.3 4.9L20 16M20 21v-5h-5' }]],
 };
@@ -290,6 +292,29 @@ export function renderGuidanceLoading(container, langCode) {
   );
 }
 
+/** "Listen to this plan": Amazon Polly reads the plan aloud, in its own language, on request. */
+function listenControl(g) {
+  if (!g.listen || !g.speechKey) return null;
+  const native = LANGUAGES[g.language]?.native ?? g.language;
+  const status = el('span', { class: 'listen-status', role: 'status' });
+  const button = el('button', { type: 'button', class: 'btn secondary small' }, icon('speaker'), el('span', {}, `Listen (${native})`));
+  const box = el('div', { class: 'listen' }, button, status);
+  button.addEventListener('click', async () => {
+    button.disabled = true;
+    status.textContent = 'Preparing the audio…';
+    try {
+      const { url } = await api(`/api/speech?${qs({ key: g.speechKey })}`);
+      const audio = el('audio', { controls: true, preload: 'auto', src: url, 'aria-label': `This plan read aloud in ${native}` });
+      box.replaceChildren(audio);
+      audio.play().catch(() => {}); // if the browser blocks autoplay, the controls are there
+    } catch (err) {
+      button.disabled = false;
+      status.textContent = err.message;
+    }
+  });
+  return box;
+}
+
 export function renderGuidance(container, g) {
   const lang = LANGUAGES[g.language] ?? LANGUAGES.en;
   const body = el('div', { lang: g.language, dir: lang.dir },
@@ -306,6 +331,7 @@ export function renderGuidance(container, g) {
 
   fill(container,
     body,
+    listenControl(g),
     g.languageFallback ? el('p', { class: 'notice' }, 'Guidance in your language is temporarily unavailable, so it is shown in English.') : null,
     el('div', { class: 'provenance' }, source,
       el('span', {}, icon('info'), 'Based on CDC/NIOSH heat guidance. Not a substitute for medical care.')),

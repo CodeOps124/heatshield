@@ -12,7 +12,7 @@
  */
 import { HttpError, json, parseBody, router } from './http.mjs';
 import { normalizeSettings, utcDay, PAUSABLE } from './control.mjs';
-import { runCost, MODEL_AGENTS } from './spend.mjs';
+import { runCost, SPEND_SOURCES } from './spend.mjs';
 
 export const RUNNABLE = Object.freeze(['sol', 'kai', 'otto', 'dispatch', 'quinn', 'iris']);
 const AUDIT_TTL_DAYS = 90;
@@ -46,7 +46,7 @@ export function createAdminApi({ agentLog, control, cache, agentsApi, invokeAgen
   async function spendByDay() {
     const days = Array.from({ length: 7 }, (_, i) => utcDay(nowMs() - (6 - i) * 86_400_000));
     const totals = Object.fromEntries(days.map((d) => [d, 0]));
-    const lists = await Promise.all(MODEL_AGENTS.map((a) => agentLog.listRunsSince(a, `${days[0]}T00:00:00.000Z`)));
+    const lists = await Promise.all(SPEND_SOURCES.map((a) => agentLog.listRunsSince(a, `${days[0]}T00:00:00.000Z`)));
     for (const r of lists.flat()) {
       const usd = runCost(r);
       if (usd && Object.hasOwn(totals, r.at.slice(0, 10))) totals[r.at.slice(0, 10)] += usd;

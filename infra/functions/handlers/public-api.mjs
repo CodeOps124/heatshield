@@ -10,7 +10,8 @@ import { createControl } from '../lib/control.mjs';
 import { createGlossaryLoader } from '../lib/agents/coach.mjs';
 import { createLanguageReviewer } from '../lib/agents/language-reviewer.mjs';
 import { createSafetyReviewer } from '../lib/agents/safety-reviewer.mjs';
-import { dynamo, converse, tables, models, reviewerModels, invokeAgent } from '../lib/aws.mjs';
+import { createSpeechService } from '../lib/speech.mjs';
+import { dynamo, converse, tables, models, reviewerModels, invokeAgent, synthesize, audioStore } from '../lib/aws.mjs';
 import { log } from '../lib/util.mjs';
 
 const store = createStore({ db: dynamo, tables });
@@ -35,6 +36,7 @@ export const handler = createPublicApi({
   agentLog,
   control,
   runAgentNow: invokeAgent,
+  speech: createSpeechService({ cache: store.guidanceCache, synthesize, storage: audioStore, gate: () => control.generation('voice'), agentLog }),
   version: process.env.APP_VERSION ?? 'dev',
   region: process.env.AWS_REGION,
 });

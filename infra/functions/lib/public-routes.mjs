@@ -5,9 +5,11 @@
  *   GET /api/risk?lat=..&lon=..&profile=..
  *   GET /api/guidance?lat=..&lon=..&profile=..&lang=..
  *   GET /api/notice             the operator's site-wide notice, if any
+ *   GET /api/speech?key=..      a plan read aloud (Amazon Polly): only plans HeatShield wrote, by key
  */
 import { assessRisk, PROFILES } from './heat.mjs';
 import { isLanguage } from './languages.mjs';
+import { canSpeak } from './speech.mjs';
 import { roundCoord } from './weather.mjs';
 import { HttpError, json, router } from './http.mjs';
 import { ValidationError, cleanText, parseCoord } from './util.mjs';
@@ -30,7 +32,7 @@ export function parseLanguage(value) {
 // no matter how many people click: at most 144 Sol runs and 720 Otto runs a day.
 export const ON_DEMAND_COOLDOWN_MS = { sol: 10 * 60_000, otto: 2 * 60_000 };
 
-export function createPublicApi({ weather, guidance, version, region, agentsApi = null, agentLog = null, runAgentNow = null, control = null, now = () => Date.now() }) {
+export function createPublicApi({ weather, guidance, version, region, agentsApi = null, agentLog = null, runAgentNow = null, control = null, speech = null, now = () => Date.now() }) {
   return router({
     'GET /api/notice': async () => json(200, { notice: control ? await control.notice() : null }),
 
@@ -94,7 +96,13 @@ export function createPublicApi({ weather, guidance, version, region, agentsApi 
       const risk = assessRisk(forecast, profile);
       const started = now();
       const result = await guidance.getGuidance(risk, lang);
-      return json(200, { lat, lon, risk, guidance: { ...result, durationMs: now() - started } });
+      const listen = Boolean(speech && result.speechKey && canSpeak(result.language));
+      return json(200, { lat, lon, risk, guidance: { ...result, listen, durationMs: now() - started } });
+    },
+
+    'GET /api/speech': async (event) => {
+      if (!speech) throw new HttpError(404, 'not_found', 'Not available');
+      return json(200, await speech.speak(event.queryStringParameters?.key));
     },
   });
 }

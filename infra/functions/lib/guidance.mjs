@@ -424,6 +424,7 @@ export function createGuidanceService({
       try {
         await cache.put({
           cacheKey: key,
+          language, // "Listen" picks the voice from it
           guidance: draft.guidance,
           model: draft.model,
           review: reviewSummary,

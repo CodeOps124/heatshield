@@ -291,19 +291,33 @@ Resources:
   PublicApiFunction:
     Type: AWS::Serverless::Function
     Properties:
-      Description: Public API - health, geocoding, heat risk, guidance (Mira writes, Lexi and Vera review), agents feed
+      Description: Public API - health, geocoding, heat risk, guidance (Mira writes, Lexi and Vera review), plans read aloud (Amazon Polly), agents feed
       Handler: handlers/public-api.handler
       Timeout: 28
       Environment:
         Variables:
           SENTINEL_FUNCTION: !Ref SentinelFunction
           WATCHDOG_FUNCTION: !Ref WatchdogFunction
+          SITE_BUCKET: !Ref SiteBucket
       Policies:
         - DynamoDBCrudPolicy: { TableName: !Ref GuidanceCacheTable }
         - DynamoDBCrudPolicy: { TableName: !Ref AgentLogTable }
         - !Ref BedrockInvokePolicy
         - LambdaInvokePolicy: { FunctionName: !Ref SentinelFunction } # visitor "ask Sol to rescan"
         - LambdaInvokePolicy: { FunctionName: !Ref WatchdogFunction } # visitor "ask Otto to check"
+        - Statement:
+            - Sid: ReadPlansAloud
+              Effect: Allow
+              Action: polly:SynthesizeSpeech
+              Resource: '*' # Polly has no resource type for SynthesizeSpeech without a lexicon
+            - Sid: StoreAudio
+              Effect: Allow
+              Action: [s3:GetObject, s3:PutObject]
+              Resource: !Sub '${SiteBucket.Arn}/audio/*'
+            - Sid: TellMissingAudioFromDenied
+              Effect: Allow
+              Action: s3:ListBucket # without it, S3 answers 403 instead of 404 for a file not made yet
+              Resource: !GetAtt SiteBucket.Arn
       Events:
         Agents: { Type: HttpApi, Properties: { ApiId: !Ref HttpApi, Method: GET, Path: /api/agents } }
         Notice: { Type: HttpApi, Properties: { ApiId: !Ref HttpApi, Method: GET, Path: /api/notice } }
@@ -312,6 +326,7 @@ Resources:
         Geocode: { Type: HttpApi, Properties: { ApiId: !Ref HttpApi, Method: GET, Path: /api/geocode } }
         Risk: { Type: HttpApi, Properties: { ApiId: !Ref HttpApi, Method: GET, Path: /api/risk } }
         Guidance: { Type: HttpApi, Properties: { ApiId: !Ref HttpApi, Method: GET, Path: /api/guidance } }
+        Speech: { Type: HttpApi, Properties: { ApiId: !Ref HttpApi, Method: GET, Path: /api/speech } }
 
   EnrollmentApiFunction:
     Type: AWS::Serverless::Function
@@ -773,6 +788,12 @@ Resources:
       BucketEncryption:
         ServerSideEncryptionConfiguration:
           - ServerSideEncryptionByDefault: { SSEAlgorithm: AES256 }
+      LifecycleConfiguration:
+        Rules:
+          - Id: expire-plan-audio # plans change every few hours; a file no one asks for again is not kept
+            Status: Enabled
+            Prefix: audio/
+            ExpirationInDays: 30
 
   SiteBucketPolicy:
     Type: AWS::S3::BucketPolicy

@@ -15,6 +15,8 @@ import { CloudWatchLogsClient, FilterLogEventsCommand, DescribeLogGroupsCommand 
 import { LambdaClient, InvokeCommand } from '@aws-sdk/client-lambda';
 import { SQSClient, GetQueueAttributesCommand, ReceiveMessageCommand, PurgeQueueCommand } from '@aws-sdk/client-sqs';
 import { CloudWatchClient, DescribeAlarmsCommand } from '@aws-sdk/client-cloudwatch';
+import { PollyClient, SynthesizeSpeechCommand } from '@aws-sdk/client-polly';
+import { S3Client, HeadObjectCommand, PutObjectCommand } from '@aws-sdk/client-s3';
 
 const doc = DynamoDBDocumentClient.from(new DynamoDBClient({}), {
   marshallOptions: { removeUndefinedValues: true },
@@ -292,3 +294,30 @@ export async function alarmStates() {
     since: a.StateUpdatedTimestamp ? new Date(a.StateUpdatedTimestamp).toISOString() : null,
   }));
 }
+
+// ---------------------------------------------------------------- "Listen" (Amazon Polly + the site bucket)
+const polly = new PollyClient({});
+const s3 = new S3Client({});
+
+export async function synthesize({ ssml, voiceId, engine, languageCode }) {
+  const res = await polly.send(new SynthesizeSpeechCommand({
+    Text: ssml, TextType: 'ssml', OutputFormat: 'mp3', VoiceId: voiceId, Engine: engine, LanguageCode: languageCode,
+  }));
+  return { audio: await res.AudioStream.transformToByteArray(), characters: res.RequestCharacters ?? 0 };
+}
+
+/** Audio files under audio/ in the site bucket, served by CloudFront. Names are content hashes. */
+export const audioStore = {
+  async exists(key) {
+    try {
+      await s3.send(new HeadObjectCommand({ Bucket: process.env.SITE_BUCKET, Key: key }));
+      return true;
+    } catch (err) {
+      if (err.$metadata?.httpStatusCode === 404) return false;
+      throw err;
+    }
+  },
+  put: (key, body) => s3.send(new PutObjectCommand({
+    Bucket: process.env.SITE_BUCKET, Key: key, Body: body, ContentType: 'audio/mpeg', CacheControl: 'public, max-age=604800, immutable',
+  })),
+};
