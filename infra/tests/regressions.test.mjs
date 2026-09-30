@@ -12,6 +12,7 @@ import { parseSafetyReview, createSafetyReviewer, evidenceInMessage } from '../f
 import { runSentinel, headlineFor } from '../functions/lib/agents/sentinel.mjs';
 import { runCoordinator } from '../functions/lib/agents/coordinator.mjs';
 import { triage, runWatchdog } from '../functions/lib/agents/watchdog.mjs';
+import { createLogsReader } from '../functions/lib/logs-reader.mjs';
 import { runAlertCheck } from '../functions/lib/alert-runner.mjs';
 import { createEnrollmentApi } from '../functions/lib/enrollment-routes.mjs';
 import { createStore } from '../functions/lib/store.mjs';
@@ -325,6 +326,31 @@ test('Otto 11:36 UTC: a model that is not enabled on the account is a setup note
   const replies = [text(JSON.stringify(incident))];
   const bad = await runWatchdog({ ...deps, converse: async () => replies.shift() });
   assert.equal(bad.outcome, 'degraded-reported');
+});
+
+test('Otto 30 Sep 05:37 UTC: an empty first page of log results made a known setup state look like a failing model', async () => {
+  // FilterLogEvents searches stream by stream; a page can be empty while more events exist.
+  const raw = (ms) => ({ timestamp: ms, message: `2026-09-30T05:36:51.229Z	req	WARN	${JSON.stringify({ level: 'warn', msg: 'bedrock_guidance_failed', modelId: 'us.anthropic.claude-haiku-4-5-20251001-v1:0', error: 'ResourceNotFoundException', message: 'Model use case details have not been submitted for this account. Fill out the Anthropic use case details form before using the model.' })}
+` });
+  const pages = [{ events: [], nextToken: 't1' }, { events: [raw(Date.parse('2026-09-30T05:36:53Z')), raw(Date.parse('2026-09-30T05:36:51Z'))], nextToken: 't2' }, { events: [] }];
+  const filterCalls = [];
+  const logs = createLogsReader({
+    filterLogEvents: async (params) => { filterCalls.push(params.nextToken ?? null); return params.filterPattern.includes('bedrock_guidance_failed') ? pages[params.nextToken ? Number(params.nextToken.slice(1)) : 0] : { events: [] }; },
+    describeLogGroups: async () => ({ logGroups: [] }),
+  });
+  const lines = await logs.sample('g', '"bedrock_guidance_failed"', 0, 3);
+  assert.equal(lines.length, 2, 'the events on page 2 are read');
+  assert.ok(lines[0].at < lines[1].at, 'oldest first, most recent last');
+  assert.deepEqual(filterCalls, [null, 't1', 't2']);
+  assert.equal(await logs.count('g', '"bedrock_guidance_failed"', 0), 2);
+  assert.doesNotMatch(lines[0].line, /req|WARN/, 'only the structured fields are kept');
+
+  const { db, tables } = createFakeDb();
+  const agentLog = createAgentLog({ db, table: tables.agentLog });
+  const fetchImpl = async (url) => ({ status: 200, text: async () => (url.includes('open-meteo') ? '{"current":{"temperature_2m":31}}' : url.includes('health') ? '{"ok":true}' : url.includes('risk') ? '{"risk":{}}' : url.includes('agents') ? '{"agents":[]}' : 'HeatShield') });
+  const r = await runWatchdog({ fetchImpl, siteUrl: 'https://x.test', agentLog, logs, logGroups: { publicApi: 'g' }, models: ['m'], publish: async () => {}, converse: async () => { throw new Error('a setup state needs no model call'); } });
+  assert.equal(r.outcome, 'healthy');
+  assert.match(r.summary, /primary model is not enabled on the account yet/);
 });
 
 test('Mira 11:55 UTC: a runaway Swahili reply hit the token limit; the writer now takes one more sample before giving up', async () => {
