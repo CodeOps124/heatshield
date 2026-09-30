@@ -37,6 +37,7 @@ function ago(iso) {
 function until(iso) {
   if (!iso) return '';
   const s = Math.max(0, Math.round((Date.parse(iso) - Date.now()) / 1000));
+  if (s >= 3600) return `${Math.floor(s / 3600)} h ${Math.floor((s % 3600) / 60)} min`; // daily agents
   return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
 }
 const outcomeClass = (o) => (o === 'error' ? 'bad' : ['revise', 'degraded-reported', 'down-reported', 'partial'].includes(o) ? 'warn' : 'ok');
@@ -189,8 +190,9 @@ function specialFor(a) {
       return el('div', { class: 'panel-block' }, el('h3', {}, 'Mira\'s word lists'),
         el('p', {}, `From ${c.reviewed} corrections in the last 7 days, Iris added ${Object.values(c.added ?? {}).reduce((a, b) => a + b, 0)} word(s) and rejected ${c.rejected} on a second look.`),
         langs.length ? el('ul', { class: 'plain-list' }, langs.map(([lang, n]) => el('li', {},
-          el('strong', {}, `${LANGUAGES[lang]?.native ?? lang}: ${n} word(s)`),
-          (c.samples?.[lang] ?? []).map((e) => el('div', { class: 'hint', lang, dir: LANGUAGES[lang]?.dir ?? 'ltr' }, `"${e.use}" (${e.meaning}), not "${e.wrong}"`))))) : el('p', { class: 'hint' }, 'No word lists yet.'));
+          el('strong', {}, el('bdi', { lang }, LANGUAGES[lang]?.native ?? lang), `: ${n} word(s)`),
+          (c.samples?.[lang] ?? []).map((e) => el('div', { class: 'hint' },
+            '"', el('bdi', { lang }, e.use), `" (${e.meaning}), not "`, el('bdi', { lang }, e.wrong), '"'))))) : el('p', { class: 'hint' }, 'No word lists yet.'));
     }
     default: return null;
   }

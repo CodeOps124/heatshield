@@ -308,7 +308,7 @@ details.table-view summary { cursor: pointer; color: var(--link); font-size: 0.9
 .data-table { width: 100%; border-collapse: collapse; font-size: 0.88rem; margin-top: 8px; }
 .data-table th, .data-table td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--border); vertical-align: middle; }
 .data-table th { color: var(--ink-2); font-weight: 600; font-size: 0.82rem; }
-.data-table td.num { font-variant-numeric: tabular-nums; }
+.data-table td.num { font-variant-numeric: tabular-nums; white-space: nowrap; }
 .table-scroll { overflow-x: auto; }
 
 /* outlook */
