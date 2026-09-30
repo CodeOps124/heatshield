@@ -8,7 +8,7 @@ export class ApiError extends Error {
   }
 }
 
-export async function api(path, { method = 'GET', body, headers = {}, signal } = {}) {
+async function request(path, { method = 'GET', body, headers = {}, signal } = {}) {
   let res;
   try {
     res = await fetch(path, {
@@ -28,10 +28,33 @@ export async function api(path, { method = 'GET', body, headers = {}, signal } =
     /* non-JSON error page */
   }
   if (!res.ok) {
-    const fallback = res.status === 429 ? 'Too many requests right now. Please wait a moment and try again.' : `Request failed (${res.status})`;
+    const fallback = res.status === 429 ? 'Too many requests right now. Please wait a moment and try again.'
+      : res.status === 503 ? 'HeatShield is busy right now. Please try again in a moment.'
+        : `Request failed (${res.status})`;
     throw new ApiError(data?.error?.message ?? fallback, res.status, data?.error?.code);
   }
   return data;
+}
+
+const sleep = (ms, signal) => new Promise((resolve, reject) => {
+  const timer = setTimeout(resolve, ms);
+  signal?.addEventListener('abort', () => { clearTimeout(timer); reject(new DOMException('Aborted', 'AbortError')); }, { once: true });
+});
+
+// A read that AWS turned away for a moment is asked again, twice at most: Lambda answers 503 when the
+// account's concurrency limit is reached (30 Sep: 13 plans requested at once, 3 refused), and API
+// Gateway 429 when its rate limit is. HeatShield's own errors carry a code and are never retried,
+// and nothing that changes data is sent twice.
+export async function api(path, options = {}) {
+  for (let attempt = 0; ; attempt += 1) {
+    try {
+      return await request(path, options);
+    } catch (err) {
+      const transient = err instanceof ApiError && (err.status === 503 || err.status === 429) && !err.code;
+      if ((options.method ?? 'GET') !== 'GET' || !transient || attempt >= 2) throw err;
+      await sleep([1500, 4000][attempt] + Math.random() * 500, options.signal);
+    }
+  }
 }
 
 export const qs = (params) =>

@@ -8,7 +8,7 @@ import { runAgent, extractJson } from '../functions/lib/agent-runtime.mjs';
 import { createAgentLog } from '../functions/lib/agent-log.mjs';
 import { createGuidanceService } from '../functions/lib/guidance.mjs';
 import { parseLanguageReview } from '../functions/lib/agents/language-reviewer.mjs';
-import { parseSafetyReview, createSafetyReviewer, evidenceInMessage } from '../functions/lib/agents/safety-reviewer.mjs';
+import { parseSafetyReview, createSafetyReviewer, evidenceInMessage, namesEmergencyNumber } from '../functions/lib/agents/safety-reviewer.mjs';
 import { runSentinel, headlineFor } from '../functions/lib/agents/sentinel.mjs';
 import { runCoordinator } from '../functions/lib/agents/coordinator.mjs';
 import { triage, runWatchdog } from '../functions/lib/agents/watchdog.mjs';
@@ -444,6 +444,50 @@ test('Vera 12:24 UTC: a harm objection must survive a second reading that points
   const broken = [text(JSON.stringify({ issues: [objection] })), text('no json here'), text('still none')];
   const unsure = await createSafetyReviewer({ converse: async () => broken.shift(), models: ['m'] }).review(plan, { factsList: '- x', situation: '- y', deadline: Date.now() + 20_000 });
   assert.equal(unsure.verdict, 'revise', 'if the second reading fails, the objection stands');
+});
+
+test('Vera and Lexi 30 Sep 06:05 UTC: a correct Arabic plan went to the fallback over objections the message itself refutes', async () => {
+  const plan = {
+    headline: 'الحرارة مرتفعة اليوم، يجب أن تكون حذراً للغاية.',
+    actions: ['استرح في مكان مظلل كل 5-10 دقائق أثناء العمل.', 'اشرب كوباً من الماء كل 15 إلى 20 دقيقة.', 'حافظ على برودة غرفة النوم قدر الإمكان.'],
+    seekHelp: 'إذا شعرت بالارتباك أو الإغماء أو لاحظت أي علامات أخرى للسكتة الدماغية الحرارية، اتصل برقم الطوارئ المحلي الخاص بك على الفور.',
+  };
+  const review = (message, issues) => createSafetyReviewer({ converse: async () => text(JSON.stringify({ issues })), models: ['m'] })
+    .review(message, { factsList: '- x', situation: '- y', deadline: Date.now() + 20_000, language: 'ar' });
+
+  // The final objection proposed the sentence as written as its own fix.
+  const same = await review(plan, [{ quote: plan.seekHelp, rule: 'd', problem: 'The text should ask people to call the local emergency number if they notice heat-stroke signs.', fix: plan.seekHelp }]);
+  assert.equal(same.verdict, 'approve');
+  assert.match(same.issues[0].problem, /the suggested fix is the text as written/);
+
+  // The one before: "should also list other signs", while the help sentence names the emergency number.
+  const shorter = { ...plan, seekHelp: 'إذا شعرت بالارتباك أو الإغماء، اتصل برقم الطوارئ المحلي الخاص بك على الفور.' };
+  const more = await review(shorter, [{ quote: shorter.seekHelp, rule: 'd', problem: 'The text should also include other heat-stroke signs.', fix: plan.seekHelp }]);
+  assert.equal(more.verdict, 'approve');
+  assert.match(more.issues[0].problem, /does tell people to call the emergency number/);
+
+  // A help sentence that really lacks the emergency number still blocks.
+  const missing = { ...plan, seekHelp: 'إذا شعرت بالارتباك أو الإغماء، استرح في الظل.' };
+  assert.equal((await review(missing, [{ quote: missing.seekHelp, rule: 'd', problem: 'Does not tell people to call the emergency number.', fix: 'اتصل برقم الطوارئ.' }])).verdict, 'revise');
+
+  // Lexi: a preference is a note; a real grammar error and a wrong decimal separator still block.
+  const bt = { headline: 'x', actions: ['a', 'b'], seekHelp: 'c' };
+  const lexi = (issue) => parseLanguageReview(JSON.stringify({ backTranslation: bt, issues: [issue] })).issues[0].severity;
+  assert.equal(lexi({ quote: 'لاستراحة', fix: 'للراحة', category: 'word', problem: "'استراحة' is not the best word for a short break; 'راحة' is more appropriate." }), 'minor');
+  assert.equal(lexi({ quote: 'شرب كوب من الماء', fix: 'اشرَب كوب من الماء', category: 'grammar', problem: "The verb 'شرب' should be in the imperative form 'اشرَب'." }), 'blocking');
+  assert.equal(lexi({ quote: '1,5 lít', fix: '1.5 lít', category: 'word', problem: 'Wrong decimal separator.' }), 'blocking', 'punctuation counts');
+  assert.equal(lexi({ quote: 'Tome descansos.', fix: 'tome descansos. ', category: 'word', problem: 'Wrong word.' }), 'minor', 'the same words');
+
+  // The words each language uses for the emergency number, from live plans (30 Sep).
+  const help = (language, seekHelp) => namesEmergencyNumber({ seekHelp }, language);
+  assert.ok(help('ur', 'اگر آپ کو بے ہوشی، الجھن، یا بہت زیادہ گرمی محسوس ہو تو اپنے مقامی امدادی نمبر پر فون کریں۔'));
+  assert.ok(help('hi', 'अगर कोई चक्कर आना, भ्रम या बेहोशी हो तो तुरंत अपने स्थानीय आपातकालीन नंबर पर कॉल करें।'));
+  assert.ok(help('bn', 'যদি মাথা ঘোরা, অচেতনতা বা বুদ্ধি হারানো হয়, আপনার স্থানীয় জরুরি নম্বরে কল করুন।'));
+  assert.ok(help('vi', 'Nếu có dấu hiệu như mệt mỏi, chóng mặt, nôn mửa hoặc bất tỉnh thì gọi số điện thoại khẩn cấp địa phương ngay.'));
+  assert.ok(help('zh', '如果出现头痛、恶心、头晕、虚弱、大量出汗、口渴或意识模糊，请立即拨打当地紧急电话。'));
+  assert.ok(help('sw', 'Ishara za mapigo ya joto ni kuchanganyikiwa, kufaintia: piga simu ya dharura ya eneo lako.'));
+  assert.ok(help('fr', "Si vous perdez connaissance, appelez votre numéro d'urgence local immédiatement."));
+  assert.ok(!help('en', 'If you feel faint, rest in the shade.'));
 });
 
 test('Kai: empty groups (left by end-to-end tests) are skipped, not counted as planned', async () => {

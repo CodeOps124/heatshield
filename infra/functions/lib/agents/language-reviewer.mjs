@@ -15,6 +15,7 @@
 import { runAgent, extractJson } from '../agent-runtime.mjs';
 import { languageMatches } from '../algorithms/langid.mjs';
 import { LANGUAGES } from '../languages.mjs';
+import { sameText } from '../util.mjs';
 
 const CATEGORIES = new Set(['word', 'grammar', 'language', 'fact', 'style']);
 const BLOCKING = new Set(['word', 'grammar', 'language']);
@@ -23,7 +24,9 @@ const BLOCKING = new Set(['word', 'grammar', 'language']);
 // grammar errors. None of those mislead a reader, so code keeps them as notes unless the problem
 // names a real error (not a real word, a misspelling, a typo, the wrong meaning).
 const REAL_ERROR = /not a real|not an? (?:actual|existing)|misspel|typo|invented|does not exist|wrong (?:word|meaning|language)|means\b/i;
-const WORDING_ONLY = /awkward|idiomatic|natural|phrasing|redundant|repeated|repetitive|unclear|standard term|correct term|official|level name|could be (?:clearer|simpler|simplified|improved)/i;
+// "Not the best word; X is more appropriate" (30 Sep, Arabic "استراحة", a standard word for a break)
+// is a preference, not an error.
+const WORDING_ONLY = /awkward|idiomatic|natural|phrasing|redundant|repeated|repetitive|unclear|standard term|correct term|official|level name|could be (?:clearer|simpler|simplified|improved)|not the best|more (?:appropriate|suitable|common|precise)|better (?:word|choice|term|option)|preferable|preferred|commonly used/i;
 export const isWordingOnly = (problem) => !REAL_ERROR.test(problem) && WORDING_ONLY.test(problem);
 
 const clean = (s, n) => (typeof s === 'string' ? s.replace(/\s+/g, ' ').trim().slice(0, n) : '');
@@ -41,7 +44,7 @@ export function parseLanguageReview(text) {
     return {
       quote: clean(i?.quote, 200),
       category,
-      severity: BLOCKING.has(category) && !isWordingOnly(problem) ? 'blocking' : 'minor',
+      severity: BLOCKING.has(category) && !isWordingOnly(problem) && !sameText(i?.quote, i?.fix) ? 'blocking' : 'minor',
       problem,
       fix: clean(i?.fix, 200),
     };

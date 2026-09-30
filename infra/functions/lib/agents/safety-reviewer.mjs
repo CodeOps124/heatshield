@@ -8,12 +8,36 @@
  * Decision power: approve, or send the draft back citing the rule it broke.
  */
 import { runAgent, extractJson } from '../agent-runtime.mjs';
+import { sameText } from '../util.mjs';
 
 // Omissions are not violations, except the emergency advice (rule d). Live, the model still filed
 // "does not specify the amount of water, which could lead to overhydration" under rule b.
 const OMISSION = /\b(?:does not|doesn't|did not|fails to|no mention|not mention|missing|lacks|should (?:also )?(?:advise|mention|specify|include|say|state))\b/i;
 
 const clean = (s, n) => (typeof s === 'string' ? s.replace(/\s+/g, ' ').trim().slice(0, n) : '');
+
+// Rule (d) is the one omission that blocks: the emergency advice. These are the words each language
+// uses for it in live plans and in the reviewers' quotes (30 Sep; Urdu writes "امدادی نمبر", an aid
+// number, Swahili "simu ya dharura" or "nambari ya msaada"); Indonesian and Tagalog from standard
+// usage, with no live sample yet. When the help sentence has one, "never tells people to call the
+// local emergency number" is refuted by the message itself, and what remains is a completeness note
+// (30 Sep, Arabic: "should also list other heat-stroke signs" sent a correct plan to the fallback).
+const EMERGENCY = {
+  en: /emergency/i, es: /emergencia/i, fr: /urgence/i, pt: /emerg[êe]ncia/i,
+  ar: /طوارئ|إسعاف|اسعاف/u, ur: /امداد|ایمرجنسی|ہنگامی/u, hi: /आपात/u, bn: /জরুরি/u,
+  zh: /紧急|急救/u, vi: /khẩn cấp|cấp cứu/iu, id: /darurat/i, tl: /emergency|emerhensi?ya/i, sw: /dharura|msaada/i,
+};
+export const namesEmergencyNumber = (guidance, language) => Boolean(EMERGENCY[language]?.test(String(guidance?.seekHelp ?? '').normalize('NFC')));
+
+/** Objections the message itself refutes become notes. */
+export function refuteByMessage(issues, guidance, language) {
+  for (const i of issues) {
+    if (i.severity !== 'blocking' || i.detector) continue;
+    if (sameText(i.quote, i.fix)) Object.assign(i, { severity: 'minor', problem: `${i.problem} (the suggested fix is the text as written)` });
+    else if (i.rule === 'd' && namesEmergencyNumber(guidance, language)) Object.assign(i, { severity: 'minor', problem: `${i.problem} (the help sentence does tell people to call the emergency number)` });
+  }
+  return issues;
+}
 
 // International drug names are written the same way across Latin-script languages.
 const MEDICINES = /\b(paracetamol|acetaminophen|ibuprofen|aspirin|aspirina|diclofenac|naproxen|salt tablets?|tabletas de sal)\b/iu;
@@ -84,7 +108,7 @@ export function parseVerification(text, count) {
 export function createSafetyReviewer({ converse, models }) {
   return {
     name: 'vera',
-    async review(guidance, { factsList, situation, deadline }) {
+    async review(guidance, { factsList, situation, deadline, language }) {
       const ruleIssues = detectRuleViolations(guidance);
       if (ruleIssues.length) {
         return { verdict: 'revise', method: 'rules', issues: ruleIssues, usage: { inputTokens: 0, outputTokens: 0 }, model: null };
@@ -95,7 +119,7 @@ export function createSafetyReviewer({ converse, models }) {
           models,
           maxTurns: 1,
           maxTokens: 900,
-          system: 'You are Vera, HeatShield\'s clinical safety reviewer. You check public heat-safety messages against a fixed list of vetted public-health facts. You judge safety only, not style or completeness. The message may be in any language; read it in that language. Advice the vetted facts recommend (water, shade, rest, loose light clothing, a hat or head covering, cool showers, checking on others) is never a violation, and you do not invent risks the facts do not mention. Everyday words for a risk level are fine, and a missing detail is not a violation unless it is the emergency advice in rule (d). Report only real violations of the rules you are given; if there are none, return an empty list.',
+          system: 'You are Vera, HeatShield\'s clinical safety reviewer. You check public heat-safety messages against a fixed list of vetted public-health facts. You judge safety only, not style or completeness. The message may be in any language; read it in that language. Advice the vetted facts recommend (water, shade, rest, loose light clothing, a hat or head covering, cool showers, checking on others) is never a violation, and you do not invent risks the facts do not mention. Everyday words for a risk level are fine, and a missing detail is not a violation unless it is the emergency advice in rule (d). Report only real violations of the rules you are given; if there are none, return an empty list. Write each "problem" in English; "quote" and "fix" stay in the message\'s own language.',
           tools: [],
         },
         input: `Vetted facts (the standard: advice that agrees with any of them is correct, even when worded or rounded differently):\n${factsList}\n\nThe person's situation:\n${situation}\n\nMessage to review:\n${JSON.stringify({ headline: guidance.headline, actions: guidance.actions, seekHelp: guidance.seekHelp })}\n\nReport a problem only if the message:\n${Object.entries(RULES).map(([k, r]) => `(${k}) ${r.text};`).join('\n')}\n\nReply with ONLY this JSON (empty "issues" if nothing applies):\n{"issues":[{"quote":"exact words","rule":"a|b|c|d|e","problem":"...","fix":"..."}]}`,
@@ -104,6 +128,8 @@ export function createSafetyReviewer({ converse, models }) {
         validate: parseSafetyReview,
       });
       const out = { ...res.value, method: 'rules+llm', usage: { ...res.usage }, model: res.model };
+      refuteByMessage(out.issues, guidance, language);
+      out.verdict = out.issues.some((i) => i.severity === 'blocking') ? 'revise' : 'approve';
       const harm = out.issues.filter((i) => i.severity === 'blocking' && (i.rule === 'b' || i.rule === 'c'));
       if (harm.length && deadline - Date.now() > 4000) {
         try {

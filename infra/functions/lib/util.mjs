@@ -18,6 +18,16 @@ export const log = {
 /** URL-safe random id. 9 bytes -> 12 chars, 24 bytes -> 32 chars. */
 export const newId = (bytes = 9) => randomBytes(bytes).toString('base64url');
 
+/**
+ * Same words, ignoring spacing and case. Punctuation and accents count: "1,5" and "1.5" differ, and
+ * so do Vietnamese tones. A reviewer objection whose fix is the quoted text refutes itself (30 Sep:
+ * Vera blocked an Arabic plan's emergency sentence and proposed the same sentence as the fix).
+ */
+export const sameText = (a, b) => {
+  const n = (s) => String(s ?? '').normalize('NFC').replace(/\s+/g, ' ').trim().toLowerCase();
+  return n(a) !== '' && n(a) === n(b);
+};
+
 /** We store only a SHA-256 of bearer secrets (admin keys, manage tokens), never the secret. */
 export const hashSecret = (secret) => createHash('sha256').update(String(secret)).digest('hex');
 
