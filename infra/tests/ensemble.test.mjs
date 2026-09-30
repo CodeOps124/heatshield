@@ -90,6 +90,7 @@ test('Sol downloads at most 3 ensembles per run, keeps each for 6 hours, and the
   assert.equal(withChance.length, 3);
   assert.equal(withChance[0].chance, 1);
   assert.equal(withChance[0].confidence, 'very likely');
+  assert.ok(withChance.every((e) => e.chanceOf === (e.level === 'emergency' ? 'extreme_danger' : 'danger')), 'says what the chance is of');
   now += 3600_000;
   await run();
   assert.equal(ensembleCalls, 4, 'the next hour downloads only the one still missing');

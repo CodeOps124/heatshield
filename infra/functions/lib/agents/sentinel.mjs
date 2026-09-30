@@ -340,7 +340,8 @@ export async function runSentinel({ store, weather, climate, agentLog, converse,
   const enrich = (e) => {
     const a = candidates.find((c) => c.areaId === e.areaId);
     const chance = maxChance(a, e.level === 'emergency' ? 'pExtremeDanger' : 'pDanger');
-    return { ...e, trend: trendOf(a.place, e.level), headline: headlineFor(a), place: a.place, lat: a.lat, lon: a.lon, people: a.people, ehfWorst: a.ehf.worst, ceiling: a.ceiling, chance, confidence: chance === null ? null : likelihood(chance) };
+    // chanceOf names what the chance is of: a "hotter than usual" watch can carry a low chance of Danger.
+    return { ...e, trend: trendOf(a.place, e.level), headline: headlineFor(a), place: a.place, lat: a.lat, lon: a.lon, people: a.people, ehfWorst: a.ehf.worst, ceiling: a.ceiling, chance, chanceOf: chance === null ? null : e.level === 'emergency' ? 'extreme_danger' : 'danger', confidence: chance === null ? null : likelihood(chance) };
   };
   if (!allowModel) {
     // AI work is paused (operator or daily budget): the algorithm still reports every heat signal.

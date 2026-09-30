@@ -20,6 +20,11 @@ const avg = (xs) => (xs.length ? Math.round((xs.reduce((a, b) => a + b, 0) / xs.
 
 const city = (c) => c.place.split(',')[0];
 const fmt = (x) => `${x > 0 ? '+' : ''}${x}`;
+// "The most accurate" with a three-way tie at 0.6 °C (first live run) must say so.
+const tiedWith = (c, all) => {
+  const ties = all.filter((x) => x !== c && Math.abs(x.lead1.maeC - c.lead1.maeC) <= 0.05).map(city);
+  return ties.length ? `, tied with ${ties.length > 1 ? `${ties.slice(0, -1).join(', ')} and ${ties.at(-1)}` : ties[0]}` : '';
+};
 
 /** The claims Quinn may make, each with the test the numbers must pass and the sentence code writes. */
 export const CLAIMS = {
@@ -41,12 +46,12 @@ export const CLAIMS = {
   most_accurate: {
     means: 'the smallest average day-ahead error of all the cities',
     holds: (c, all) => all.length > 1 && c.lead1.maeC <= Math.min(...all.map((x) => x.lead1.maeC)) + 0.05,
-    say: (c) => `${city(c)}: the most accurate forecast (off by ${c.lead1.maeC} °C on average).`,
+    say: (c, all) => `${city(c)}: the most accurate forecast (off by ${c.lead1.maeC} °C on average${tiedWith(c, all)}).`,
   },
   least_accurate: {
     means: 'the largest average day-ahead error of all the cities',
     holds: (c, all) => all.length > 1 && c.lead1.maeC >= Math.max(...all.map((x) => x.lead1.maeC)) - 0.05,
-    say: (c) => `${city(c)}: the least accurate forecast (off by ${c.lead1.maeC} °C on average).`,
+    say: (c, all) => `${city(c)}: the least accurate forecast (off by ${c.lead1.maeC} °C on average${tiedWith(c, all)}).`,
   },
 };
 
@@ -60,7 +65,7 @@ export function verifyClaims(picked, report) {
     const claim = CLAIMS[p?.claim];
     if (!c || !claim) { rejected.push({ city: p?.city ?? null, claim: p?.claim ?? null, why: 'unknown city or claim' }); continue; }
     if (!claim.holds(c, report.cities)) { rejected.push({ city: city(c), claim: p.claim, why: 'not supported by the scores' }); continue; }
-    if (!accepted.some((a) => a.city === city(c) && a.claim === p.claim)) accepted.push({ city: city(c), claim: p.claim, sentence: claim.say(c) });
+    if (!accepted.some((a) => a.city === city(c) && a.claim === p.claim)) accepted.push({ city: city(c), claim: p.claim, sentence: claim.say(c, report.cities) });
   }
   return { accepted, rejected };
 }

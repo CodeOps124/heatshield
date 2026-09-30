@@ -81,7 +81,7 @@ export function createAgentsApi({ agentLog, control = null, nowMs = () => Date.n
             briefedAt: sentinel.briefedAt ?? null,
             briefing: sentinel.briefing,
             areasScanned: sentinel.areasScanned,
-            events: (sentinel.events ?? []).map(({ place, level, trend, headline, reason, ehfWorst, lat, lon, stale, chance, confidence }) => ({ place, level, trend, headline, reason, ehfWorst, lat: round1(lat), lon: round1(lon), stale: Boolean(stale), chance: chance ?? null, confidence: confidence ?? null })),
+            events: (sentinel.events ?? []).map(({ place, level, trend, headline, reason, ehfWorst, lat, lon, stale, chance, chanceOf, confidence }) => ({ place, level, trend, headline, reason, ehfWorst, lat: round1(lat), lon: round1(lon), stale: Boolean(stale), chance: chance ?? null, chanceOf: chanceOf ?? null, confidence: confidence ?? null })),
             areas: (sentinel.areas ?? []).map(({ place, ceiling, ehfWorst, worstTier, lat, lon, climatePending, stale, asOf, chanceOfDanger }) => ({ place, ceiling, ehfWorst, worstTier, lat: round1(lat), lon: round1(lon), climatePending: Boolean(climatePending), stale: Boolean(stale), asOf: asOf ?? null, chanceOfDanger: chanceOfDanger ?? null })),
           }
         : null,

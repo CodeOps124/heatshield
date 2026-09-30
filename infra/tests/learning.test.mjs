@@ -67,6 +67,11 @@ test('Quinn 30 Sep: the model called Karachi\'s Danger record "perfect" (it miss
   assert.deepEqual(dangerSentences(live), ['Danger days the day-ahead forecast missed: Dhaka 2, Phoenix 2, Cuiabá 1, Ho Chi Minh City 1.', 'Day-ahead Danger forecasts that did not happen: Dhaka 3, Ho Chi Minh City 2, Cuiabá 1.']);
   assert.deepEqual(dangerSentences({ cities: [{ place: 'Lagos', danger: { hits: 0, misses: 0, falseAlarms: 0 } }] }), ['No city had a Danger day to forecast.']);
   assert.deepEqual(dangerSentences({ cities: [dubai] }), ['The day-ahead forecast caught every Danger day (14 of 14).']);
+  // Ties are named (live, 30 Sep: Mombasa, Karachi and Manila were all off by 0.6 °C).
+  const at = (place, maeC) => ({ place, lead1: { days: 14, maeC, biasC: 0, tierAgreement: 1 }, danger: { hits: 0, misses: 0, falseAlarms: 0 } });
+  const tied = { cities: [at('Mombasa', 0.6), at('Karachi', 0.6), at('Manila', 0.6), at('Phoenix', 1.4)] };
+  assert.equal(verifyClaims([{ city: 'Mombasa', claim: 'most_accurate' }], tied).accepted[0].sentence, 'Mombasa: the most accurate forecast (off by 0.6 °C on average, tied with Karachi and Manila).');
+  assert.equal(verifyClaims([{ city: 'Phoenix', claim: 'least_accurate' }], tied).accepted[0].sentence, 'Phoenix: the least accurate forecast (off by 1.4 °C on average).');
   // Mixed signs are not "ran hot"; "most accurate" needs something to compare with.
   const mixed = { ...dubai, lead1: { ...dubai.lead1, biasC: -0.6 }, lead3: { ...dubai.lead3, biasC: 0.8 } };
   assert.deepEqual(verifyClaims([{ city: 'Dubai', claim: 'ran_hot' }, { city: 'Dubai', claim: 'ran_cold' }], { ...report, cities: [mixed] }).accepted.map((a) => a.claim), ['ran_cold']);
