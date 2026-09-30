@@ -2,7 +2,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { verifyPeaks } from '../functions/lib/algorithms/verification.mjs';
-import { runAuditor, verifyClaims, codeNote } from '../functions/lib/agents/auditor.mjs';
+import { runAuditor, verifyClaims, codeNote, dangerSentences } from '../functions/lib/agents/auditor.mjs';
 import { candidatesFrom, runCoach, mergeGlossary, glossaryLines, createGlossaryLoader, MAX_WORDS, isWordLevel, changedWords } from '../functions/lib/agents/coach.mjs';
 import { runSentinel, COOLER_CLAIM, withoutSentences } from '../functions/lib/agents/sentinel.mjs';
 import { createStore } from '../functions/lib/store.mjs';
@@ -49,18 +49,24 @@ test('Quinn 30 Sep: the model called Karachi\'s Danger record "perfect" (it miss
   const report = { windowDays: 14, cities: [karachi, dubai], overall: { lead1MaeC: 0.9, lead3MaeC: 1.7, lead1BiasC: 0.3 } };
   const { accepted, rejected } = verifyClaims([
     { city: 'Karachi', claim: 'reliable_danger_calls' },
-    { city: 'Karachi', claim: 'missed_danger' },
+    { city: 'Karachi', claim: 'most_accurate' },
     { city: 'Dubai', claim: 'ran_hot' },
     { city: 'Dubai', claim: 'reliable_danger_calls' },
     { city: 'Atlantis', claim: 'ran_hot' },
   ], report);
   assert.deepEqual(accepted.map((a) => a.sentence), [
-    'Karachi: the day-ahead forecast missed 2 Danger day(s).',
+    'Karachi: the most accurate forecast (off by 0.6 °C on average).',
     'Dubai: the forecast ran hot (+0.5 °C one day ahead, +1.3 °C three days ahead).',
     'Dubai: every day-ahead Danger forecast was right (14 of 14).',
   ]);
   assert.deepEqual(rejected.map((r) => `${r.city}:${r.claim}`), ['Karachi:reliable_danger_calls', 'Atlantis:ran_hot']);
-  assert.match(codeNote(report), /Karachi: the day-ahead forecast missed 2 Danger day/);
+  // The Danger errors are code's to report, for every city, whatever the model picks.
+  assert.deepEqual(dangerSentences(report), ['Danger days the day-ahead forecast missed: Karachi 2.']);
+  assert.match(codeNote(report), /off by 0\.9 °C on average, and by 1\.7 °C three days ahead\. Danger days the day-ahead forecast missed: Karachi 2\.$/);
+  const live = { cities: [['Dhaka', 2, 3, 6], ['Ho Chi Minh City', 1, 2, 1], ['Cuiabá', 1, 1, 2], ['Phoenix', 2, 0, 0]].map(([place, misses, falseAlarms, hits]) => ({ place, danger: { hits, misses, falseAlarms } })) };
+  assert.deepEqual(dangerSentences(live), ['Danger days the day-ahead forecast missed: Dhaka 2, Phoenix 2, Cuiabá 1, Ho Chi Minh City 1.', 'Day-ahead Danger forecasts that did not happen: Dhaka 3, Ho Chi Minh City 2, Cuiabá 1.']);
+  assert.deepEqual(dangerSentences({ cities: [{ place: 'Lagos', danger: { hits: 0, misses: 0, falseAlarms: 0 } }] }), ['No city had a Danger day to forecast.']);
+  assert.deepEqual(dangerSentences({ cities: [dubai] }), ['The day-ahead forecast caught every Danger day (14 of 14).']);
   // Mixed signs are not "ran hot"; "most accurate" needs something to compare with.
   const mixed = { ...dubai, lead1: { ...dubai.lead1, biasC: -0.6 }, lead3: { ...dubai.lead3, biasC: 0.8 } };
   assert.deepEqual(verifyClaims([{ city: 'Dubai', claim: 'ran_hot' }, { city: 'Dubai', claim: 'ran_cold' }], { ...report, cities: [mixed] }).accepted.map((a) => a.claim), ['ran_cold']);
@@ -78,7 +84,7 @@ test('Quinn end to end: verified claims make the note; an unsupported one is rec
   const report = await agentLog.getState('quinn', 'latest');
   assert.equal(r.outcome, 'audited');
   assert.equal(report.noteBy, 'model');
-  assert.match(report.note, /^Over the last 14 days[\s\S]*Dhaka: the forecast ran hot[\s\S]*Dhaka: every day-ahead Danger forecast was right \(14 of 14\)/);
+  assert.match(report.note, /^Over the last 14 days[\s\S]*caught every Danger day \(14 of 14\)\. Dhaka: the forecast ran hot[\s\S]*Dhaka: every day-ahead Danger forecast was right \(14 of 14\)/);
   assert.deepEqual(report.rejectedClaims.map((x) => x.claim), ['ran_cold']);
 });
 
@@ -89,10 +95,10 @@ test('Quinn 30 Sep: a reply with too few claims (the prompt example, copied) is 
   const days = Array.from({ length: 15 }, (_, i) => new Date(Date.UTC(2026, 8, 16 + i)).toISOString().slice(0, 10));
   const weather = { getPreviousRuns: async (lat) => ({ hourly: previousRuns({ days, truth: days.map(() => 35), lead1: days.map(() => (lat > 24 ? 35 : 36)), lead3: days.map(() => 37) }), utcOffsetSeconds: 21600 }) };
   const seen = [];
-  const replies = [{ claims: [{ city: 'Karachi', claim: 'missed_danger' }] }, { claims: [{ city: 'Dhaka', claim: 'ran_hot' }, { city: 'Karachi', claim: 'most_accurate' }, { city: 'Dhaka', claim: 'least_accurate' }] }];
+  const replies = [{ claims: [{ city: 'Karachi', claim: 'ran_cold' }] }, { claims: [{ city: 'Dhaka', claim: 'ran_hot' }, { city: 'Karachi', claim: 'most_accurate' }, { city: 'Dhaka', claim: 'least_accurate' }] }];
   const converse = async ({ messages }) => { seen.push(messages.at(-1).content[0].text); return text(JSON.stringify(replies.shift())); };
   await runAuditor({ agentLog, weather, converse, models: ['m'], nowMs: () => Date.parse('2026-09-30T01:30:00Z') });
-  assert.match(seen[1], /0 of your claims hold \(Karachi missed_danger: not supported by the scores\); choose at least 3/);
+  assert.match(seen[1], /0 of your claims hold \(Karachi ran_cold: not supported by the scores\); choose at least 2/);
   const report = await agentLog.getState('quinn', 'latest');
   assert.equal(report.noteBy, 'model');
   assert.match(report.note, /Dhaka: the forecast ran hot[\s\S]*Karachi: the most accurate[\s\S]*Dhaka: the least accurate/);

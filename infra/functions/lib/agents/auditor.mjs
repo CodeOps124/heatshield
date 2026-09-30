@@ -4,10 +4,12 @@
  * heat index over the last 14 days are scored against the same model's own analysis
  * (algorithms/verification.mjs): mean error, bias, tier agreement, and Danger hits / misses /
  * false alarms. Sol receives the scores, so a briefing can say how far to trust the forecast.
- * Model: decides which facts the team should hear about, as claims from a fixed list. Code checks
- * every claim against the scores and writes the sentence; a claim the numbers do not support is
- * dropped and counted. (The first version let the model write prose: it called Karachi's Danger
- * record "perfect" when the forecast had missed 2 Danger days.)
+ * Code: every missed Danger day and every false alarm, for every city, in two sentences. These are
+ * the errors that decide whether people get warned, so they are never left to a model's choice.
+ * Model: picks the other facts worth knowing, as claims from a fixed list. Code checks every claim
+ * against the scores and writes the sentence; a claim the numbers do not support is dropped and
+ * counted. (The first version let the model write prose: it called Karachi's Danger record
+ * "perfect" when the forecast had missed 2 Danger days.)
  */
 import { runAgent, extractJson } from '../agent-runtime.mjs';
 import { verifyPeaks } from '../algorithms/verification.mjs';
@@ -30,16 +32,6 @@ export const CLAIMS = {
     means: 'the forecast peaks were cooler than what happened, by 0.5 °C or more on average',
     holds: (c) => c.lead1.biasC <= -0.5 || (c.lead1.biasC <= 0 && (c.lead3?.biasC ?? 0) <= -0.5),
     say: (c) => `${city(c)}: the forecast ran cool (${fmt(c.lead1.biasC)} °C one day ahead${c.lead3 ? `, ${fmt(c.lead3.biasC)} °C three days ahead` : ''}).`,
-  },
-  missed_danger: {
-    means: 'a Danger day that the day-ahead forecast did not call',
-    holds: (c) => c.danger.misses > 0,
-    say: (c) => `${city(c)}: the day-ahead forecast missed ${c.danger.misses} Danger day(s).`,
-  },
-  false_alarms: {
-    means: 'a day-ahead Danger forecast that did not happen',
-    holds: (c) => c.danger.falseAlarms > 0,
-    say: (c) => `${city(c)}: ${c.danger.falseAlarms} day-ahead Danger forecast(s) did not happen.`,
   },
   reliable_danger_calls: {
     means: 'Danger was forecast at least once and every day-ahead Danger call was right',
@@ -73,7 +65,7 @@ export function verifyClaims(picked, report) {
   return { accepted, rejected };
 }
 
-/** How many claims the numbers support; the model is asked for at least 3 when that many exist. */
+/** How many claims the numbers support; the model is asked for at least 2 when that many exist. */
 export const supportedClaims = (report) => report.cities.reduce((n, c) => n + Object.values(CLAIMS).filter((k) => k.holds(c, report.cities)).length, 0);
 
 export function parseClaims(text) {
@@ -87,15 +79,24 @@ export function overallSentence(report) {
   return `Over the last ${report.windowDays} days, the day-ahead forecast of each day's peak heat index was off by ${o.lead1MaeC} °C on average, and by ${o.lead3MaeC} °C three days ahead.`;
 }
 
-/** Without a model: the same checked claims, chosen by a fixed rule (every city with a Danger error). */
-export function codeNote(report) {
-  const picked = report.cities.flatMap((c) => [
-    ...(c.danger.misses ? [{ city: city(c), claim: 'missed_danger' }] : []),
-    ...(c.danger.falseAlarms ? [{ city: city(c), claim: 'false_alarms' }] : []),
-  ]);
-  const { accepted } = verifyClaims(picked, report);
-  return [overallSentence(report), ...accepted.map((a) => a.sentence)].join(' ');
+/** Every Danger error, for every city, worst first. Written by code whether or not a model runs. */
+export function dangerSentences(report) {
+  const worst = (key) => report.cities.filter((c) => c.danger[key] > 0)
+    .sort((a, b) => b.danger[key] - a.danger[key] || city(a).localeCompare(city(b)))
+    .map((c) => `${city(c)} ${c.danger[key]}`);
+  const dangerDays = report.cities.reduce((n, c) => n + c.danger.hits + c.danger.misses, 0);
+  const misses = worst('misses');
+  const falseAlarms = worst('falseAlarms');
+  return [
+    !dangerDays ? 'No city had a Danger day to forecast.'
+      : misses.length ? `Danger days the day-ahead forecast missed: ${misses.join(', ')}.`
+        : `The day-ahead forecast caught every Danger day (${dangerDays} of ${dangerDays}).`,
+    ...(falseAlarms.length ? [`Day-ahead Danger forecasts that did not happen: ${falseAlarms.join(', ')}.`] : []),
+  ];
 }
+
+/** Without a model: the overall error and the Danger errors. */
+export const codeNote = (report) => [overallSentence(report), ...dangerSentences(report)].join(' ');
 
 export async function runAuditor({ agentLog, weather, converse, models, allowModel = true, nowMs = () => Date.now(), deadline = Date.now() + 100_000 }) {
   const sol = await agentLog.getState('sol', 'latest');
@@ -139,10 +140,10 @@ export async function runAuditor({ agentLog, weather, converse, models, allowMod
           models,
           maxTurns: 1,
           maxTokens: 500,
-          system: `You are Quinn, HeatShield's forecast auditor. From a verification report, choose the 3 to 6 facts a team of community health workers most needs, to know how far to trust the heat forecast in each city. Danger calls that went wrong matter most. Each fact is a city and one of these claims:\n${Object.entries(CLAIMS).map(([name, k]) => `- ${name}: ${k.means}`).join('\n')}\nOnly choose claims the numbers support; code checks every one.`,
+          system: `You are Quinn, HeatShield's forecast auditor. A team of community health workers wants to know how far to trust the heat forecast in each city. Every missed Danger day and false alarm is already reported to them. From a verification report, choose the 2 to 4 other facts that help them most. Each fact is a city and one of these claims:\n${Object.entries(CLAIMS).map(([name, k]) => `- ${name}: ${k.means}`).join('\n')}\nOnly choose claims the numbers support; code checks every one.`,
           tools: [],
         },
-        input: `Verification report (daily peak heat index, forecast vs the model's own analysis):\n${JSON.stringify({ windowDays: report.windowDays, overall: report.overall, cities: cities.map(({ place, lead1, lead3, danger }) => ({ city: place.split(',')[0], oneDayAhead: lead1, threeDaysAhead: lead3, dangerCallsOneDayAhead: danger })) })}\n\nReply with ONLY this JSON, with 3 to 6 claims: {"claims":[{"city":"<a city in the report>","claim":"<a claim name>"}]}`,
+        input: `Verification report (daily peak heat index, forecast vs the model's own analysis):\n${JSON.stringify({ windowDays: report.windowDays, overall: report.overall, cities: cities.map(({ place, lead1, lead3, danger }) => ({ city: place.split(',')[0], oneDayAhead: lead1, threeDaysAhead: lead3, dangerCallsOneDayAhead: danger })) })}\n\nReply with ONLY this JSON, with 2 to 4 claims: {"claims":[{"city":"<a city in the report>","claim":"<a claim name>"}]}`,
         converse,
         deadline,
         repairs: 2,
@@ -150,7 +151,7 @@ export async function runAuditor({ agentLog, weather, converse, models, allowMod
         // prompt's example, copied.)
         validate: (text) => {
           const result = verifyClaims(parseClaims(text), report);
-          const need = Math.min(3, supportedClaims(report));
+          const need = Math.min(2, supportedClaims(report));
           if (result.accepted.length < need) {
             const why = result.rejected.map((r) => `${r.city} ${r.claim}: ${r.why}`).join('; ');
             throw new Error(`${result.accepted.length} of your claims hold${why ? ` (${why})` : ''}; choose at least ${need} different claims the numbers support`);
@@ -159,7 +160,7 @@ export async function runAuditor({ agentLog, weather, converse, models, allowMod
         },
       });
       checked = run.value;
-      if (checked.accepted.length) note = [overallSentence(report), ...checked.accepted.map((a) => a.sentence)].join(' ');
+      if (checked.accepted.length) note = [codeNote(report), ...checked.accepted.map((a) => a.sentence)].join(' ');
     } catch {
       run = null; // the code-chosen note stands
     }
