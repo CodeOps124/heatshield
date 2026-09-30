@@ -3,7 +3,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { verifyPeaks } from '../functions/lib/algorithms/verification.mjs';
 import { runAuditor, verifyClaims, codeNote } from '../functions/lib/agents/auditor.mjs';
-import { candidatesFrom, runCoach, mergeGlossary, glossaryLines, createGlossaryLoader, MAX_WORDS, isWordLevel } from '../functions/lib/agents/coach.mjs';
+import { candidatesFrom, runCoach, mergeGlossary, glossaryLines, createGlossaryLoader, MAX_WORDS, isWordLevel, changedWords } from '../functions/lib/agents/coach.mjs';
 import { runSentinel, COOLER_CLAIM, withoutSentences } from '../functions/lib/agents/sentinel.mjs';
 import { createStore } from '../functions/lib/store.mjs';
 import { bestShift } from '../functions/lib/agents/coordinator.mjs';
@@ -136,6 +136,21 @@ test('Iris 30 Sep: only word-level fixes go on the list; "means X here" and styl
   assert.equal(isWordLevel("'تھڑی' is not a correct Urdu word. The correct word for 'midday' is 'دوپہر'.", 'تھڑی دھوپ', 'دوپہر کی دھوپ'), true);
   assert.equal(isWordLevel("Incorrect word; should be 'ठंडा पानी'", 'चंदा पानि', 'ठंडा पानी'), true, 'a small edit of the same phrase');
   assert.equal(isWordLevel("'Mtelezaji' is not a real Swahili word. It seems intended to mean 'anyone'.", 'mtelezaji', 'mtu yeyote'), true);
+  // Measured on the changed words only: a swapped word inside a shared phrase is not a spelling fix.
+  assert.deepEqual(changedWords('مستوى الخطر شديد', 'مستوى الخطر مرتفع'), ['شديد', 'مرتفع']);
+  assert.equal(isWordLevel('Incorrect word choice', 'مستوى الخطر شديد', 'مستوى الخطر مرتفع'), false, 'severe -> high softens a warning');
+  assert.equal(isWordLevel('Incorrect word', 'trà nước lạnh', 'nước lạnh'), false, 'dropping "tea" changes what is said');
+  assert.equal(isWordLevel('Wrong verb form', 'lome descansos', 'tome descansos'), true);
+});
+
+test('Iris: a phrase with two different fixes, or one that is both a fix and a mistake, is left out', () => {
+  const run = (issues) => ({ at: '2026-09-30T00:00:00Z', detail: { language: 'tl', issues: issues.map(([quote, fix]) => ({ severity: 'blocking', category: 'word', quote, fix, problem: 'misspelled' })) } });
+  const out = candidatesFrom([run([['malalim na init', 'masidhing init'], ['malalim na init', 'malubhang init'], ['inaasahang sa', 'inaasahan sa']])]);
+  assert.deepEqual(out.tl.map((c) => c.wrong), ['inaasahang sa']);
+  const chain = candidatesFrom([run([['malalim na pag-init', 'malubhang pag-init'], ['malubhang pag-init', 'labis na pag-iingat']])]);
+  assert.equal(chain.tl, undefined);
+  const againstList = candidatesFrom([run([['mag-ingat', 'mag-iingat']])], { tl: [{ wrong: 'mag-iingat', use: 'mag-ingat', meaning: 'be careful' }] });
+  assert.equal(againstList.tl, undefined, 'the list already says the opposite');
 });
 
 test('Sol 30 Sep: "Dhaka is cooler than usual" is sent back; if it comes back again, the sentence is dropped', async () => {

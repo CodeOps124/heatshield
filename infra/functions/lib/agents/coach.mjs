@@ -3,7 +3,8 @@
  * The team learns from its own mistakes: Lexi's corrections of Mira's words become a per-language
  * word list that Mira is given for every later plan in that language.
  * Algorithm (the exact part): from the last 7 days of Lexi's blocking word/grammar issues, keep only
- * term-level corrections (short, in the right script, different from the original), normalise and
+ * term-level corrections (short, in the right script, different from the original, word-level: a
+ * spelling or form fix, measured on the words that changed), drop any phrase with conflicting fixes,
  * count repeats, drop what the list already has, rank by how often the mistake recurred.
  * Model (the judgment part): a strict second opinion on each proposed entry. Only entries it
  * confirms are published; Lexi herself was sometimes wrong (she called the standard Vietnamese
@@ -15,7 +16,7 @@ import { LANGUAGES } from '../languages.mjs';
 export const MAX_WORDS = 12; // per language; short enough to fit in every prompt
 const MAX_CANDIDATES = 10; // per language and run (cost bound)
 const clean = (s, n) => (typeof s === 'string' ? s.replace(/\s+/g, ' ').trim().slice(0, n) : '');
-const norm = (s) => clean(s, 80).normalize('NFC').toLowerCase().replace(/^[\s"'«»“”‘’.,;:!?()]+|[\s"'«»“”‘’.,;:!?()]+$/g, '');
+const norm = (s) => clean(s, 80).normalize('NFC').toLowerCase().replace(/[\u200B\uFEFF]/g, '').replace(/^[\s"'«»“”‘’.,;:!?()]+|[\s"'«»“”‘’.,;:!?()]+$/g, '');
 const words = (s) => s.split(/\s+/).filter(Boolean).length;
 
 // A word list is for words that are wrong everywhere: misspellings, non-words, wrong grammatical
@@ -37,8 +38,26 @@ function editRatio(a, b) {
   return prev[y.length] / Math.max(x.length, y.length, 1);
 }
 
+/**
+ * The words that differ once the shared words at both ends are set aside. Measured on the whole
+ * phrase, "danger level severe" -> "danger level high" (Arabic, first run) looked like a small edit;
+ * it is a swapped word that softens a warning.
+ */
+export function changedWords(wrong, use) {
+  const a = wrong.split(/\s+/).filter(Boolean);
+  const b = use.split(/\s+/).filter(Boolean);
+  while (a.length && b.length && a[0] === b[0]) { a.shift(); b.shift(); }
+  while (a.length && b.length && a.at(-1) === b.at(-1)) { a.pop(); b.pop(); }
+  return [a.join(' '), b.join(' ')];
+}
+
 /** A correction that is true in any sentence: a spelling or form fix, never a meaning or style choice. */
-export const isWordLevel = (note, wrong, use) => !CONTEXTUAL.test(note) && (SPELLING.test(note) || editRatio(wrong, use) <= 0.4);
+export function isWordLevel(note, wrong, use) {
+  if (CONTEXTUAL.test(note)) return false;
+  const [from, to] = changedWords(wrong, use);
+  if (!from || !to) return false; // a word added or removed changes what is said
+  return SPELLING.test(note) || editRatio(from, to) <= 0.4;
+}
 
 /** Term-level corrections from Lexi's runs, counted by (language, wrong, right). */
 export function candidatesFrom(runs, glossaries = {}) {
@@ -62,8 +81,13 @@ export function candidatesFrom(runs, glossaries = {}) {
       found.set(key, c);
     }
   }
+  // A misspelling has one fix. Two different fixes for one phrase, or a phrase that is both a fix and
+  // a mistake (first run, Tagalog: "malalim na init" got two fixes), mean taste, not spelling.
+  const list = [...found.values()];
+  const conflicted = (c) => list.some((o) => o !== c && o.language === c.language && (o.wrong === c.wrong || o.wrong === c.use || o.use === c.wrong))
+    || (glossaries[c.language] ?? []).some((e) => e.wrong === c.use || e.use === c.wrong);
   const byLang = {};
-  for (const c of [...found.values()].sort((a, b) => b.seen - a.seen || b.lastSeen.localeCompare(a.lastSeen))) {
+  for (const c of list.filter((x) => !conflicted(x)).sort((a, b) => b.seen - a.seen || b.lastSeen.localeCompare(a.lastSeen))) {
     (byLang[c.language] ??= []).length < MAX_CANDIDATES && byLang[c.language].push(c);
   }
   return byLang;
