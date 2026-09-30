@@ -59,14 +59,16 @@ async function poll() {
 
 function renderStatus() {
   const w = data.watchdog;
-  const runs = [...data.agents, ...(data.workers ?? [])].reduce((s, a) => s + (a.runs24h ?? 0), 0);
+  const everyone = [...data.agents, ...(data.workers ?? [])];
+  const runs = everyone.reduce((s, a) => s + (a.runs24h ?? 0), 0);
+  const plus = everyone.some((a) => a.atLeast) ? '+' : ''; // only the latest runs are read: a lower bound
   const word = { healthy: 'All systems healthy', degraded: 'Degraded', down: 'Site down' }[w?.status] ?? 'Status unknown';
   const up = w?.uptime;
   const paused = data.control?.paused ?? [];
   const parts = [
     `${word}${w?.checkedAt ? ` (Otto checked ${ago(w.checkedAt)})` : ''}`,
     up?.upPct != null ? `available ${up.upPct}% of ${up.checks} checks in ${up.windowDays} days` : null,
-    `${runs} agent runs in the last 24 h`,
+    `${runs.toLocaleString()}${plus} agent runs in the last 24 h`,
     data.control?.aiPaused ? 'new AI work paused by the operator or the daily budget' : null,
     paused.length ? `paused: ${paused.map((id) => AGENT_META[id]?.name ?? id).join(', ')}` : null,
     data.sentinel ? `Sol is watching ${data.sentinel.areas.length} areas, ${data.sentinel.events.length} heat event(s)` : null,
@@ -206,7 +208,7 @@ function renderPanel() {
   panel.append(
     el('div', { class: 'panel-head' }, portrait(a.id),
       el('div', {}, el('h2', { id: 'agent-title' }, `${a.name} · ${a.role}`),
-        el('p', { class: 'hint' }, `${a.status === 'working' ? 'Working now' : a.status === 'error' ? 'Last run failed' : a.status === 'waiting' ? 'Has not run yet' : 'Ready'} · ${a.runs24h} runs and ${a.tokens24h.toLocaleString()} tokens in 24 h`))),
+        el('p', { class: 'hint' }, `${a.status === 'working' ? 'Working now' : a.status === 'error' ? 'Last run failed' : a.status === 'waiting' ? 'Has not run yet' : 'Ready'} · ${a.runs24h}${a.atLeast ? '+' : ''} runs and ${a.tokens24h.toLocaleString()}${a.atLeast ? '+' : ''} tokens in 24 h`))),
     el('dl', { class: 'kv-list' },
       row('Expertise', a.expertise),
       row('Algorithm', a.algorithm),

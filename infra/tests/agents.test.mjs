@@ -333,4 +333,11 @@ test('agents API: status from latest runs, next-run countdowns, review stats', a
   const later = await createAgentsApi({ agentLog, nowMs: () => now }).get();
   assert.deepEqual(later.auditor.rejectedClaims, [{ city: 'Phoenix', claim: 'ran_cold', why: 'not supported by the scores' }]);
   assert.deepEqual(later.sentinel.events.map((e) => e.chanceOf), ['danger', 'extreme_danger', null]);
+
+  // 45 Mira runs in the last hour: only the latest 40 are read, so the 24-hour count is a lower bound.
+  for (let i = 0; i < 45; i += 1) { now += 60_000; await agentLog.recordRun('mira', { outcome: 'ok', summary: 'plan' }); }
+  const busy = await createAgentsApi({ agentLog, nowMs: () => now }).get();
+  const mira = busy.agents.find((a) => a.id === 'mira');
+  assert.deepEqual([mira.runs24h, mira.atLeast], [40, true]);
+  assert.equal(busy.agents.find((a) => a.id === 'kai').atLeast, false);
 });

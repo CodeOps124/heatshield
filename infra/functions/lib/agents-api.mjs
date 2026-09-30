@@ -24,7 +24,11 @@ export function createAgentsApi({ agentLog, control = null, nowMs = () => Date.n
     const now = nowMs();
     const dayAgo = now - 86_400_000;
     const everyone = [...ROSTER, ...WORKERS];
-    const runs = Object.fromEntries(await Promise.all(everyone.map(async (a) => [a.id, await agentLog.listRuns(a.id, a.id === 'otto' ? 100 : 40)])));
+    const limitFor = (id) => (id === 'otto' ? 100 : 40);
+    const runs = Object.fromEntries(await Promise.all(everyone.map(async (a) => [a.id, await agentLog.listRuns(a.id, limitFor(a.id))])));
+    // Only the most recent runs are read. When all of them fall inside the last 24 h, the 24-hour
+    // counts are lower bounds (Mira ran 233 times by 30 Sep 05:50 UTC; the page said 40), and say so.
+    const capped = (id) => runs[id].length >= limitFor(id) && Date.parse(runs[id].at(-1).at) > dayAgo;
     const [sentinel, watchdog, ctl, audit, coach] = await Promise.all([
       agentLog.getState('sol', 'latest'), agentLog.getState('otto', 'latest'), control ? control.load() : null,
       agentLog.getState('quinn', 'latest'), agentLog.getState('iris', 'latest'),
@@ -54,6 +58,7 @@ export function createAgentsApi({ agentLog, control = null, nowMs = () => Date.n
         nextRunAt: nextRunAt(a.schedule, now),
         runs24h: today.length,
         tokens24h: today.reduce((s, r) => s + (r.inputTokens ?? 0) + (r.outputTokens ?? 0), 0),
+        atLeast: capped(a.id), // runs24h and tokens24h are lower bounds
         recent: recent.slice(0, 6).map(runView),
       };
     };
@@ -109,6 +114,7 @@ export function createAgentsApi({ agentLog, control = null, nowMs = () => Date.n
       coach: coach ? { generatedAt: coach.generatedAt, reviewed: coach.reviewed, added: coach.added, rejected: coach.rejected, sizes: coach.sizes, samples: wordLists } : null,
       reviews,
       reviewStats24h: {
+        atLeast: capped('lexi') || capped('vera'),
         total: reviewed.length,
         approved: reviewed.filter((r) => r.detail.verdict === 'approve').length,
         sentBack: reviewed.filter((r) => r.detail.verdict === 'revise').length,
