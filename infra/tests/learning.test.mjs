@@ -73,13 +73,29 @@ test('Quinn end to end: verified claims make the note; an unsupported one is rec
   await agentLog.putState('sol', 'latest', { areas: [{ place: 'Dhaka, Bangladesh', lat: 23.8, lon: 90.4 }] });
   const days = Array.from({ length: 15 }, (_, i) => new Date(Date.UTC(2026, 8, 16 + i)).toISOString().slice(0, 10));
   const weather = { getPreviousRuns: async () => ({ hourly: previousRuns({ days, truth: days.map(() => 35), lead1: days.map(() => 36), lead3: days.map(() => 37) }), utcOffsetSeconds: 21600 }) };
-  const claims = { claims: [{ city: 'Dhaka', claim: 'ran_hot' }, { city: 'Dhaka', claim: 'ran_cold' }] };
+  const claims = { claims: [{ city: 'Dhaka', claim: 'ran_hot' }, { city: 'Dhaka', claim: 'ran_cold' }, { city: 'Dhaka', claim: 'reliable_danger_calls' }] };
   const r = await runAuditor({ agentLog, weather, converse: async () => text(JSON.stringify(claims)), models: ['m'], nowMs: () => Date.parse('2026-09-30T01:30:00Z') });
   const report = await agentLog.getState('quinn', 'latest');
   assert.equal(r.outcome, 'audited');
   assert.equal(report.noteBy, 'model');
-  assert.match(report.note, /^Over the last 14 days[\s\S]*Dhaka: the forecast ran hot/);
+  assert.match(report.note, /^Over the last 14 days[\s\S]*Dhaka: the forecast ran hot[\s\S]*Dhaka: every day-ahead Danger forecast was right \(14 of 14\)/);
   assert.deepEqual(report.rejectedClaims.map((x) => x.claim), ['ran_cold']);
+});
+
+test('Quinn 30 Sep: a reply with too few claims (the prompt example, copied) is sent back', async () => {
+  const { db, tables } = createFakeDb();
+  const agentLog = createAgentLog({ db, table: tables.agentLog });
+  await agentLog.putState('sol', 'latest', { areas: [{ place: 'Dhaka, Bangladesh', lat: 23.8, lon: 90.4 }, { place: 'Karachi, Pakistan', lat: 24.9, lon: 67 }] });
+  const days = Array.from({ length: 15 }, (_, i) => new Date(Date.UTC(2026, 8, 16 + i)).toISOString().slice(0, 10));
+  const weather = { getPreviousRuns: async (lat) => ({ hourly: previousRuns({ days, truth: days.map(() => 35), lead1: days.map(() => (lat > 24 ? 35 : 36)), lead3: days.map(() => 37) }), utcOffsetSeconds: 21600 }) };
+  const seen = [];
+  const replies = [{ claims: [{ city: 'Karachi', claim: 'missed_danger' }] }, { claims: [{ city: 'Dhaka', claim: 'ran_hot' }, { city: 'Karachi', claim: 'most_accurate' }, { city: 'Dhaka', claim: 'least_accurate' }] }];
+  const converse = async ({ messages }) => { seen.push(messages.at(-1).content[0].text); return text(JSON.stringify(replies.shift())); };
+  await runAuditor({ agentLog, weather, converse, models: ['m'], nowMs: () => Date.parse('2026-09-30T01:30:00Z') });
+  assert.match(seen[1], /0 of your claims hold \(Karachi missed_danger: not supported by the scores\); choose at least 3/);
+  const report = await agentLog.getState('quinn', 'latest');
+  assert.equal(report.noteBy, 'model');
+  assert.match(report.note, /Dhaka: the forecast ran hot[\s\S]*Karachi: the most accurate[\s\S]*Dhaka: the least accurate/);
 });
 
 // ---------------------------------------------------------------- Iris

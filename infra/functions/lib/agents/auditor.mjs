@@ -22,30 +22,37 @@ const fmt = (x) => `${x > 0 ? '+' : ''}${x}`;
 /** The claims Quinn may make, each with the test the numbers must pass and the sentence code writes. */
 export const CLAIMS = {
   ran_hot: {
+    means: 'the forecast peaks were warmer than what happened, by 0.5 °C or more on average',
     holds: (c) => c.lead1.biasC >= 0.5 || (c.lead1.biasC >= 0 && (c.lead3?.biasC ?? 0) >= 0.5),
     say: (c) => `${city(c)}: the forecast ran hot (${fmt(c.lead1.biasC)} °C one day ahead${c.lead3 ? `, ${fmt(c.lead3.biasC)} °C three days ahead` : ''}).`,
   },
   ran_cold: {
+    means: 'the forecast peaks were cooler than what happened, by 0.5 °C or more on average',
     holds: (c) => c.lead1.biasC <= -0.5 || (c.lead1.biasC <= 0 && (c.lead3?.biasC ?? 0) <= -0.5),
     say: (c) => `${city(c)}: the forecast ran cool (${fmt(c.lead1.biasC)} °C one day ahead${c.lead3 ? `, ${fmt(c.lead3.biasC)} °C three days ahead` : ''}).`,
   },
   missed_danger: {
+    means: 'a Danger day that the day-ahead forecast did not call',
     holds: (c) => c.danger.misses > 0,
     say: (c) => `${city(c)}: the day-ahead forecast missed ${c.danger.misses} Danger day(s).`,
   },
   false_alarms: {
+    means: 'a day-ahead Danger forecast that did not happen',
     holds: (c) => c.danger.falseAlarms > 0,
     say: (c) => `${city(c)}: ${c.danger.falseAlarms} day-ahead Danger forecast(s) did not happen.`,
   },
   reliable_danger_calls: {
+    means: 'Danger was forecast at least once and every day-ahead Danger call was right',
     holds: (c) => c.danger.hits > 0 && c.danger.misses === 0 && c.danger.falseAlarms === 0,
     say: (c) => `${city(c)}: every day-ahead Danger forecast was right (${c.danger.hits} of ${c.danger.hits}).`,
   },
   most_accurate: {
+    means: 'the smallest average day-ahead error of all the cities',
     holds: (c, all) => all.length > 1 && c.lead1.maeC <= Math.min(...all.map((x) => x.lead1.maeC)) + 0.05,
     say: (c) => `${city(c)}: the most accurate forecast (off by ${c.lead1.maeC} °C on average).`,
   },
   least_accurate: {
+    means: 'the largest average day-ahead error of all the cities',
     holds: (c, all) => all.length > 1 && c.lead1.maeC >= Math.max(...all.map((x) => x.lead1.maeC)) - 0.05,
     say: (c) => `${city(c)}: the least accurate forecast (off by ${c.lead1.maeC} °C on average).`,
   },
@@ -65,6 +72,9 @@ export function verifyClaims(picked, report) {
   }
   return { accepted, rejected };
 }
+
+/** How many claims the numbers support; the model is asked for at least 3 when that many exist. */
+export const supportedClaims = (report) => report.cities.reduce((n, c) => n + Object.values(CLAIMS).filter((k) => k.holds(c, report.cities)).length, 0);
 
 export function parseClaims(text) {
   const raw = extractJson(text);
@@ -129,15 +139,26 @@ export async function runAuditor({ agentLog, weather, converse, models, allowMod
           models,
           maxTurns: 1,
           maxTokens: 500,
-          system: `You are Quinn, HeatShield's forecast auditor. From a verification report, choose the 3 to 6 facts a team of community health workers most needs, to know how far to trust the heat forecast in each city. Each fact is a city and one claim from this list: ${Object.keys(CLAIMS).join(', ')}. Only choose claims the numbers support; code checks every one.`,
+          system: `You are Quinn, HeatShield's forecast auditor. From a verification report, choose the 3 to 6 facts a team of community health workers most needs, to know how far to trust the heat forecast in each city. Danger calls that went wrong matter most. Each fact is a city and one of these claims:\n${Object.entries(CLAIMS).map(([name, k]) => `- ${name}: ${k.means}`).join('\n')}\nOnly choose claims the numbers support; code checks every one.`,
           tools: [],
         },
-        input: `Verification report (daily peak heat index, forecast vs the model's own analysis):\n${JSON.stringify({ windowDays: report.windowDays, overall: report.overall, cities: cities.map(({ place, lead1, lead3, danger }) => ({ city: place.split(',')[0], oneDayAhead: lead1, threeDaysAhead: lead3, dangerCallsOneDayAhead: danger })) })}\n\nReply with ONLY this JSON: {"claims":[{"city":"Karachi","claim":"missed_danger"}]}`,
+        input: `Verification report (daily peak heat index, forecast vs the model's own analysis):\n${JSON.stringify({ windowDays: report.windowDays, overall: report.overall, cities: cities.map(({ place, lead1, lead3, danger }) => ({ city: place.split(',')[0], oneDayAhead: lead1, threeDaysAhead: lead3, dangerCallsOneDayAhead: danger })) })}\n\nReply with ONLY this JSON, with 3 to 6 claims: {"claims":[{"city":"<a city in the report>","claim":"<a claim name>"}]}`,
         converse,
         deadline,
-        validate: parseClaims,
+        repairs: 2,
+        // Verified while the model can still fix it. (Its first live reply was one claim: the
+        // prompt's example, copied.)
+        validate: (text) => {
+          const result = verifyClaims(parseClaims(text), report);
+          const need = Math.min(3, supportedClaims(report));
+          if (result.accepted.length < need) {
+            const why = result.rejected.map((r) => `${r.city} ${r.claim}: ${r.why}`).join('; ');
+            throw new Error(`${result.accepted.length} of your claims hold${why ? ` (${why})` : ''}; choose at least ${need} different claims the numbers support`);
+          }
+          return result;
+        },
       });
-      checked = verifyClaims(run.value, report);
+      checked = run.value;
       if (checked.accepted.length) note = [overallSentence(report), ...checked.accepted.map((a) => a.sentence)].join(' ');
     } catch {
       run = null; // the code-chosen note stands
