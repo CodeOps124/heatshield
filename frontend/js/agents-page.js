@@ -162,10 +162,17 @@ function specialFor(a) {
     }
     case 'quinn': {
       const q = data.auditor;
+      const quinnByline = (a) => {
+        const rejected = a.rejectedClaims ?? [];
+        const picked = a.noteBy === 'model'
+          ? ` Quinn picked the other facts and code checked each one${rejected.length ? `, rejecting ${rejected.length} the numbers do not support (${rejected.map((r) => `${r.city}: ${String(r.claim).replace(/_/g, ' ')}`).join('; ')})` : ''}.`
+          : '';
+        return `Missed and false Danger calls are counted and written by code.${picked} Compared with ${a.reference}.`;
+      };
       if (!q) return el('div', { class: 'panel-block' }, el('p', { class: 'hint' }, 'Quinn audits the forecast once a day at 01:30 UTC; the first report appears after the first run.'));
       return el('div', { class: 'panel-block' }, el('h3', {}, `Forecast track record, last ${q.windowDays} days`),
         el('p', {}, q.note),
-        el('p', { class: 'hint' }, `Written by ${q.noteBy === 'model' ? 'Quinn (numbers checked by code)' : 'code'}. Compared with ${q.reference}.`),
+        el('p', { class: 'hint' }, quinnByline(q)),
         el('div', { class: 'table-scroll' }, el('table', { class: 'data-table' },
           el('thead', {}, el('tr', {}, el('th', {}, 'City'), el('th', { class: 'num' }, 'Day-ahead error'), el('th', { class: 'num' }, 'Bias'), el('th', { class: 'num' }, 'Right tier'), el('th', {}, 'Danger calls'))),
           el('tbody', {}, q.cities.map((c) => el('tr', {},

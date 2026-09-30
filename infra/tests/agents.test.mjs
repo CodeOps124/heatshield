@@ -326,4 +326,11 @@ test('agents API: status from latest runs, next-run countdowns, review stats', a
   assert.equal(by.kai.nextRunAt, '2026-09-29T12:15:00.000Z');
   assert.equal(out.reviewStats24h.approved, 1);
   assert.equal(nextRunAt(null, now), null);
+
+  // Quinn's rejected claims are public; events stored before chanceOf existed get it by Sol's rule.
+  await agentLog.putState('quinn', 'latest', { windowDays: 14, note: 'n', noteBy: 'model', cities: [], rejectedClaims: [{ city: 'Phoenix', claim: 'ran_cold', why: 'not supported by the scores' }] });
+  await agentLog.putState('sol', 'latest', { events: [{ place: 'Dhaka', level: 'watch', chance: 0.27, confidence: 'unlikely' }, { place: 'Dubai', level: 'emergency', chance: 0.4 }, { place: 'Lagos', level: 'watch', chance: null }] });
+  const later = await createAgentsApi({ agentLog, nowMs: () => now }).get();
+  assert.deepEqual(later.auditor.rejectedClaims, [{ city: 'Phoenix', claim: 'ran_cold', why: 'not supported by the scores' }]);
+  assert.deepEqual(later.sentinel.events.map((e) => e.chanceOf), ['danger', 'extreme_danger', null]);
 });

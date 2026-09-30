@@ -81,7 +81,9 @@ export function createAgentsApi({ agentLog, control = null, nowMs = () => Date.n
             briefedAt: sentinel.briefedAt ?? null,
             briefing: sentinel.briefing,
             areasScanned: sentinel.areasScanned,
-            events: (sentinel.events ?? []).map(({ place, level, trend, headline, reason, ehfWorst, lat, lon, stale, chance, chanceOf, confidence }) => ({ place, level, trend, headline, reason, ehfWorst, lat: round1(lat), lon: round1(lon), stale: Boolean(stale), chance: chance ?? null, chanceOf: chanceOf ?? null, confidence: confidence ?? null })),
+            events: (sentinel.events ?? []).map(({ place, level, trend, headline, reason, ehfWorst, lat, lon, stale, chance, chanceOf, confidence }) => ({ place, level, trend, headline, reason, ehfWorst, lat: round1(lat), lon: round1(lon), stale: Boolean(stale), chance: chance ?? null,
+              // Events stored before chanceOf existed: the same rule Sol uses.
+              chanceOf: chanceOf ?? (Number.isFinite(chance) ? (level === 'emergency' ? 'extreme_danger' : 'danger') : null), confidence: confidence ?? null })),
             areas: (sentinel.areas ?? []).map(({ place, ceiling, ehfWorst, worstTier, lat, lon, climatePending, stale, asOf, chanceOfDanger }) => ({ place, ceiling, ehfWorst, worstTier, lat: round1(lat), lon: round1(lon), climatePending: Boolean(climatePending), stale: Boolean(stale), asOf: asOf ?? null, chanceOfDanger: chanceOfDanger ?? null })),
           }
         : null,
@@ -100,6 +102,7 @@ export function createAgentsApi({ agentLog, control = null, nowMs = () => Date.n
       auditor: audit
         ? {
             generatedAt: audit.generatedAt, windowDays: audit.windowDays, reference: audit.reference, note: audit.note, noteBy: audit.noteBy,
+            rejectedClaims: (audit.rejectedClaims ?? []).map(({ city, claim, why }) => ({ city, claim, why })),
             overall: audit.overall, cities: (audit.cities ?? []).map(({ place, lead1, lead3, danger }) => ({ place, lead1, lead3, danger })),
           }
         : null,
