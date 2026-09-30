@@ -1,6 +1,6 @@
 # HeatShield — Build Plan
 
-## Status (updated 2026-09-29)
+## Status (updated 2026-09-30)
 Live: https://d3tda9dyutl7ux.cloudfront.net — details and real command output in `docs/BUILD_LOG.md`.
 
 | Phase | Status |
@@ -11,9 +11,13 @@ Live: https://d3tda9dyutl7ux.cloudfront.net — details and real command output 
 | 3 · Registration + leader dashboard | Done: groups, invite links, dashboard, personal page, delete-my-data, read-only demo group. |
 | 4 · Bedrock localized guidance | Done: Mira writes, Lexi + Vera review (up to 2 revisions); cache; validation; 13 languages. Measured: 47 of 52 new plans published after calibration. Claude Haiku 4.5 is primary once the Anthropic use-case form is submitted (owner action); Nova serves until then. |
 | 5 · Alert loop | Done: EventBridge Scheduler hourly → Lambda → SNS; invoked manually (0 errors). Real email proof pending owner's subscription confirmation. |
-| 6 · Polish for judging | README, architecture diagram, screenshots, submission text, demo script updated for the agents. Remaining: public repo, demo video, Builder Center tags. |
+| 6 · Polish for judging | README, architecture diagram, screenshots, submission text, demo script updated for eight agents, operations, the console and Listen (30 Sep). Remaining: public repo, demo video, Builder Center tags. |
 | 7 · Six AI agents (beyond the original plan) | Done: Sol, Mira, Lexi, Vera, Kai, Otto on schedules and on demand; AgentLog; regression test per live incident; 100 tests. |
 | 8 · Agent HQ | Done: live pixel-art office, activity feed, agent panels, buttons that run real agents; home-page teaser; Kai's plan on the leader dashboard. |
+| 9 · Always on + operator console | Done: retry once then an SQS dead-letter queue, 9 CloudWatch alarms to the ops topic, Otto self-repair, uptime record and a measured AI budget brake; admin console behind Amazon Cognito (pauses, AI kill switch, budget, notice, run now, recall, failed runs, 90-day audit log). Owner: confirm the ops email subscription, first sign-in. |
+| 10 · Smarter agents | Done: Sol's ensemble chances, Quinn (forecast audit) and Iris (word lists) as agents seven and eight, Kai's safest shift; first outputs fact-checked against their numbers, four errors fixed with regression tests; 141 tests. |
+| 11 · Listen (Amazon Polly) | Done: approved plans read aloud in 7 of 13 languages (no Polly voice for the other 6), content-hashed audio in S3, metered in the AI budget. |
+| 12 · Ask the team | Done: a prompt box on Agent HQ; Kai (Kimi K2.5, chosen by measuring five models; Nova Pro fallback) assigns questions to the agents' read-only tools; code checks every number, health statement, link and the emergency sentence; about US$0.003 a question. |
 
 Read `CLAUDE.md` first. This is the order of operations, sized for a hackathon timeline
 (assume 3–5 focused working sessions before the deadline; adjust dates once you know the
