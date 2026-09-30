@@ -388,7 +388,7 @@ async function askTeam(question) {
       el('details', { class: 'ask-how' },
         el('summary', {}, `${helpers.length ? `Kai asked ${helpers.join(', ')}` : 'Kai answered directly'} · ${(res.durationMs / 1000).toFixed(1)} s`),
         res.trace.length ? traceList(res.trace) : null,
-        el('p', { class: 'hint' }, `Coordinated by ${modelName(res.model)} on Amazon Bedrock. Every number was checked against what the tools returned${res.checks.rewrites ? '; the first answer was sent back to be fixed' : ''}${res.checks.removedSentences ? `; ${res.checks.removedSentences} sentence(s) that could not be verified were removed` : ''}.`)),
+        el('p', { class: 'hint' }, `Coordinated by ${modelName(res.model)} on Amazon Bedrock. Every number was checked against what the tools returned${res.checks.rewrites ? '; the first answer was sent back to be fixed' : ''}${res.checks.removedSentences ? `; ${res.checks.removedSentences} sentence(s) that could not be verified were removed` : ''}${res.checks.unvetted ? '. This answer did not use the vetted health facts: check it with a health worker' : ''}.`)),
     ].filter(Boolean)); // DOM replaceChildren would print "null"
   } catch (err) {
     live.office.setTemp('kai', 'idle', 1);

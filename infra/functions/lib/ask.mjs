@@ -110,6 +110,9 @@ export function dropSentences(text, bad) {
 // emergency number for all languages; code enforces it where it can recognise the signs.
 const HEAT_STROKE_SIGNS = /confus|faint|unconscious|passed out|collaps|seizure|slurred|hot,? (?:and )?dry skin|not sweating|desmay|inconscien|confusi[oó]n|évanoui|inconscient|convuls/i;
 const EXTERNAL_LINK = /\bhttps?:\/\/|\bwww\.|(?<![\w:])\/\/[\w-]/i; // "//host" is outside too
+// Health questions must be answered from Vera's vetted facts (live, 30 Sep: a heat-stroke answer was
+// written without looking them up). Recognised in English; other languages rely on the prompt.
+export const HEALTH_QUESTION = /symptom|sick|\bill\b|dizz|nause|headache|cramp|vomit|faint|confus|unconscious|collaps|seizure|slurred|dehydrat|first aid|drink|water|medic|pregnan|heart|stroke|exhaust|rash|sweat|hydrat/i;
 // Vera's detectors (phone numbers, medicines, doses). ISO dates are taken out first: "2026-10-01"
 // has the eight digits of a phone number.
 const safetyHits = (text) => detectRuleViolations({ headline: String(text).replace(/\b\d{4}-\d{2}-\d{2}\b/g, ' '), actions: [], seekHelp: '' });
@@ -407,15 +410,20 @@ export function createAskService({ weather, guidance, agentLog, converse, models
       let asked = 0;
       let rewrites = 0;
       let removed = 0;
+      let unvetted = false;
       const validate = (text) => {
         const answer = tidy(text);
         if (!answer) throw new Error('the answer is empty');
         const allowed = allowedNumbers(seen);
         const problems = checkAnswer(answer, { allowed, question, language: languageOf(answer, language) });
+        if (HEALTH_QUESTION.test(question) && !trace.some((t) => t.agent === 'vera' || t.steps?.some((s) => s.agent === 'vera'))) {
+          problems.push({ kind: 'facts', message: 'this is a health question: call vetted_facts and give only the advice it returns' });
+        }
         if (!problems.length) return answer;
         if (asked === 0) { asked += 1; rewrites += 1; throw new Error(problems.map((p) => p.message).join('; ')); }
         const cleaned = cleanAnswer(answer, { allowed, question, language: languageOf(answer, language) });
         removed = cleaned.removed;
+        unvetted = problems.some((p) => p.kind === 'facts'); // said openly on the page
         return cleaned.text || 'The team could not verify an answer to that. Please ask again, or check your heat risk on the home page.';
       };
 
@@ -440,7 +448,7 @@ export function createAskService({ weather, guidance, agentLog, converse, models
       await agentLog?.recordRun('ask', {
         trigger: 'visitor', outcome: 'answered', model: run.model, inputTokens: run.usage.inputTokens, outputTokens: run.usage.outputTokens, durationMs: ms,
         summary: `Answered a visitor's question in ${LANGUAGES[language].name}${trace.length ? `, with ${agents.filter((a) => a !== 'kai').join(', ')}` : ''}.`,
-        detail: { language, agents, tools: trace.map((t) => t.agent), rewrites, removedSentences: removed },
+        detail: { language, agents, tools: trace.map((t) => t.agent), rewrites, removedSentences: removed, unvetted },
       }).catch(() => {});
       const plan = plans.at(-1) ?? null;
       const answer = plan ? withoutPlanLines(run.value, plan) : run.value; // the plan is shown as reviewed, once
@@ -449,7 +457,7 @@ export function createAskService({ weather, guidance, agentLog, converse, models
         answer, language: written, dir: LANGUAGES[written].dir ?? 'ltr',
         plan,
         trace: trace.map(({ agent, action, ms: t, ok, steps }) => ({ agent, action, ms: t, ok, ...(steps ? { steps } : {}) })),
-        agents, model: run.model, durationMs: ms, checks: { rewrites, removedSentences: removed },
+        agents, model: run.model, durationMs: ms, checks: { rewrites, removedSentences: removed, ...(unvetted ? { unvetted } : {}) },
       };
     },
   };

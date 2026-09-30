@@ -145,6 +145,19 @@ test('live, 30 Sep: Kai retold the plan above the plan card, and put the call fo
   assert.match(r.answer, /^Call emergency services now/, 'after one rewrite that did not fix it, code moves the call to the front');
 });
 
+test('live, 30 Sep: a heat-stroke answer was written without looking up the vetted facts; it is sent back until Vera is asked', async () => {
+  const w = world({ replies: [
+    say('Call your local emergency number now. Fan him.'),
+    call(['vetted_facts', { question: 'confused hot dry skin first aid' }]),
+    say('Call your local emergency number now. Move him to a shaded, cool area and cool him with cold water.'),
+  ] });
+  const r = await w.service.ask({ message: 'My coworker is confused and his skin is hot and dry. What do I do?' });
+  assert.match(w.calls[1].messages.at(-1).content[0].text, /this is a health question: call vetted_facts/);
+  assert.deepEqual(r.trace.map((t) => t.agent), ['vera']);
+  assert.equal(r.checks.unvetted, undefined);
+  assert.match(r.answer, /^Call your local emergency number now\. Move him/);
+});
+
 test('Quinn\'s daily audit answers for the cities he covers, so the chat and Agent HQ agree', async () => {
   const w = world({ replies: [call(['forecast_track_record', { lat: 23.8, lon: 90.4, place: 'Dhaka' }]), say('The day-ahead forecast was off by 1.2 °C.')] });
   await w.agentLog.putState('quinn', 'latest', { cities: [{ place: 'Dhaka, Bangladesh', lat: 23.81, lon: 90.41, lead1: { days: 14, maeC: 1.2, biasC: 0.6, tierAgreement: 0.64 }, lead3: { days: 14, maeC: 1.4, biasC: 0.8 }, danger: { hits: 6, misses: 2, falseAlarms: 3 } }] });
