@@ -130,6 +130,9 @@ export const notifier = {
   },
 };
 
+/** Ask the team: Kimi K2.5 coordinates, Nova Pro takes over if it is unavailable. */
+export const askModels = [process.env.ASK_MODEL_ID, process.env.REVIEWER_MODEL_ID].filter(Boolean);
+
 export const tables = {
   groups: process.env.GROUPS_TABLE,
   locations: process.env.LOCATIONS_TABLE,
@@ -283,4 +286,25 @@ export const audioStore = {
   put: (key, body) => s3.send(new PutObjectCommand({
     Bucket: process.env.SITE_BUCKET, Key: key, Body: body, ContentType: 'audio/mpeg', CacheControl: 'public, max-age=604800, immutable',
   })),
+};
+
+// ---------------------------------------------------------------- shared counters (rate limits)
+/** Atomically counts toward `max` in the agent log; false once the limit is reached. */
+export const counters = {
+  async increment(name, max, expiresAt) {
+    try {
+      await dynamo.update({
+        table: tables.agentLog,
+        key: { pk: 'limit', sk: name },
+        update: 'ADD #n :one SET expiresAt = :exp',
+        condition: 'attribute_not_exists(#n) OR #n < :max',
+        names: { '#n': 'count' },
+        values: { ':one': 1, ':max': max, ':exp': expiresAt },
+      });
+      return true;
+    } catch (err) {
+      if (err.name === 'ConditionalCheckFailedException') return false;
+      throw err;
+    }
+  },
 };

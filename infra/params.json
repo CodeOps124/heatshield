@@ -7,5 +7,6 @@
   "AgentFoundationModelArnPattern": "amazon.nova-2-lite*",
   "ReviewerModelId": "us.amazon.nova-pro-v1:0",
   "ReviewerFoundationModelArnPattern": "amazon.nova-pro*",
+  "AskModelId": "moonshotai.kimi-k2.5",
   "AlertScheduleState": "ENABLED"
 }

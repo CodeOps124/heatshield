@@ -32,6 +32,10 @@ Parameters:
     Type: String
     Default: us.amazon.nova-pro-v1:0
     Description: Model for the reviewers (Lexi, Vera) - a different model family from the writer.
+  AskModelId:
+    Type: String
+    Default: moonshotai.kimi-k2.5
+    Description: Model that coordinates Ask the team (measured best of five on tool use and grounding, 30 Sep 2026); Nova Pro is its fallback.
   ReviewerFoundationModelArnPattern:
     Type: String
     Default: 'amazon.nova-pro*'
@@ -79,6 +83,7 @@ Globals:
         BEDROCK_FALLBACK_MODEL_ID: !Ref BedrockFallbackModelId
         AGENT_MODEL_ID: !Ref AgentModelId
         REVIEWER_MODEL_ID: !Ref ReviewerModelId
+        ASK_MODEL_ID: !Ref AskModelId
         AGENT_LOG_TABLE: !Ref AgentLogTable
 
 Resources:
@@ -110,6 +115,7 @@ Resources:
                 - HasFallbackModel
                 - !Sub arn:${AWS::Partition}:bedrock:*::foundation-model/${BedrockFallbackFoundationModelArnPattern}
                 - !Ref AWS::NoValue
+              - !Sub arn:${AWS::Partition}:bedrock:${AWS::Region}::foundation-model/${AskModelId} # on-demand, no inference profile
 
   AgentLogTable:
     Type: AWS::DynamoDB::Table
@@ -284,6 +290,9 @@ Resources:
         POST /api/agents/{agentId}/run: # runs Sol or Otto; also a global per-agent cooldown in code
           ThrottlingBurstLimit: 2
           ThrottlingRateLimit: 1
+        POST /api/ask: # Ask the team (Bedrock, up to 24 s); also at most 30 questions per 10 minutes in code
+          ThrottlingBurstLimit: 3
+          ThrottlingRateLimit: 1
       AccessLogSettings:
         DestinationArn: !GetAtt HttpApiAccessLogs.Arn
         Format: '{"requestId":"$context.requestId","routeKey":"$context.routeKey","status":"$context.status","latencyMs":"$context.responseLatency","integrationError":"$context.integrationErrorMessage"}'
@@ -291,7 +300,7 @@ Resources:
   PublicApiFunction:
     Type: AWS::Serverless::Function
     Properties:
-      Description: Public API - health, geocoding, heat risk, guidance (Mira writes, Lexi and Vera review), plans read aloud (Amazon Polly), agents feed
+      Description: Public API - health, geocoding, heat risk, guidance (Mira writes, Lexi and Vera review), plans read aloud (Amazon Polly), Ask the team, agents feed
       Handler: handlers/public-api.handler
       Timeout: 28
       Environment:
@@ -327,6 +336,7 @@ Resources:
         Risk: { Type: HttpApi, Properties: { ApiId: !Ref HttpApi, Method: GET, Path: /api/risk } }
         Guidance: { Type: HttpApi, Properties: { ApiId: !Ref HttpApi, Method: GET, Path: /api/guidance } }
         Speech: { Type: HttpApi, Properties: { ApiId: !Ref HttpApi, Method: GET, Path: /api/speech } }
+        Ask: { Type: HttpApi, Properties: { ApiId: !Ref HttpApi, Method: POST, Path: /api/ask } }
 
   EnrollmentApiFunction:
     Type: AWS::Serverless::Function

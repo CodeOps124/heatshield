@@ -40,8 +40,8 @@ export const ROSTER = [
     id: 'kai', name: 'Kai', role: 'Community Coordinator', desk: 'Outreach desk',
     expertise: 'Community heat check-in programmes: who to call, by when, and what to say.',
     algorithm: 'Logistic urgency score (transparent hand-set weights) + earliest-deadline-first scheduling across time zones · sliding-window search for an outdoor crew\'s safest 8-hour shift',
-    decides: 'The words of each check-in; the order and deadlines come from the algorithm.',
-    model: 'Amazon Nova 2 Lite', tools: ['get_checkin_schedule', 'get_heat_events'],
+    decides: 'The words of each check-in (the order and deadlines come from the algorithm); and in Ask the team, which teammates to ask and the answer, where code checks every number.',
+    model: 'Amazon Nova 2 Lite; Kimi K2.5 for Ask the team', tools: ['get_checkin_schedule', 'get_heat_events', 'Ask the team: find_place, heat_outlook, forecast_track_record, write_action_plan, safest_shift, vetted_facts, system_status, learned_words, about_heatshield, signup_links'],
     trigger: 'Every 3 hours at :15, and on demand from a leader\'s dashboard', schedule: { everyMin: 180, offsetMin: 15 },
   },
   {

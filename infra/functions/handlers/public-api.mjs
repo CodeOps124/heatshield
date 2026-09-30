@@ -11,16 +11,16 @@ import { createGlossaryLoader } from '../lib/agents/coach.mjs';
 import { createLanguageReviewer } from '../lib/agents/language-reviewer.mjs';
 import { createSafetyReviewer } from '../lib/agents/safety-reviewer.mjs';
 import { createSpeechService } from '../lib/speech.mjs';
-import { dynamo, converse, tables, models, reviewerModels, invokeAgent, synthesize, audioStore } from '../lib/aws.mjs';
+import { createAskService, createAskLimiter } from '../lib/ask.mjs';
+import { dynamo, converse, tables, models, reviewerModels, askModels, invokeAgent, synthesize, audioStore, counters } from '../lib/aws.mjs';
 import { log } from '../lib/util.mjs';
 
 const store = createStore({ db: dynamo, tables });
 const agentLog = createAgentLog({ db: dynamo, table: tables.agentLog });
 const control = createControl({ agentLog });
+const weather = createWeatherClient();
 
-export const handler = createPublicApi({
-  weather: createWeatherClient(),
-  guidance: createGuidanceService({
+const guidance = createGuidanceService({
     converse,
     cache: store.guidanceCache,
     models,
@@ -31,6 +31,15 @@ export const handler = createPublicApi({
       language: createLanguageReviewer({ converse, models: reviewerModels }),
       safety: createSafetyReviewer({ converse, models: reviewerModels }),
     },
+});
+
+export const handler = createPublicApi({
+  weather,
+  guidance,
+  ask: createAskService({
+    weather, guidance, agentLog, converse, models: askModels,
+    gate: () => control.generation('ask'), // the AI kill switch and the daily budget
+    limiter: createAskLimiter({ counter: counters }),
   }),
   agentsApi: createAgentsApi({ agentLog, control }),
   agentLog,

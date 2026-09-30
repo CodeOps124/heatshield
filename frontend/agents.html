@@ -33,12 +33,12 @@
     <p class="hq-status" id="hq-status" aria-live="polite">Connecting to the agents…</p>
 
     <div class="hq-controls" role="group" aria-label="Give the agents work">
-      <button class="btn" id="task-btn" type="button">Give the team a task</button>
+      <button class="btn" id="task-btn" type="button">Ask the team</button>
       <button class="btn secondary" id="sol-btn" type="button">Ask Sol to rescan</button>
       <button class="btn secondary" id="kai-btn" type="button">Ask Kai to re-plan the demo group</button>
       <button class="btn secondary" id="otto-btn" type="button">Ask Otto to check the site</button>
     </div>
-    <p class="hint">Each button runs a real agent on AWS. Shared cooldowns keep the cost capped however many people click.</p>
+    <p class="hint">Each button runs a real agent on AWS. Shared cooldowns and a daily AI budget keep the cost capped however many people click.</p>
 
     <div class="card office-card">
       <div id="office"></div>
@@ -53,7 +53,17 @@
       </div>
     </div>
 
-    <div class="card mt-16" id="task-result" hidden></div>
+    <section class="card mt-16 ask" id="ask" aria-labelledby="ask-title">
+      <h2 id="ask-title">Ask the team</h2>
+      <p class="hint">Ask anything about heat where you are, health or work in the heat, or HeatShield itself, in any of 13 languages. Kai assigns your question to the agents, their real tools do the work, and code checks every number before you see the answer. What you type is not stored.</p>
+      <div class="ask-log" id="ask-log" aria-live="polite"></div>
+      <form class="ask-form" id="ask-form">
+        <label class="visually-hidden" for="ask-input">Your question for the team</label>
+        <textarea id="ask-input" rows="2" maxlength="500" dir="auto" placeholder="For example: When should my crew in Karachi start work tomorrow?" required></textarea>
+        <button class="btn" type="submit" id="ask-send">Ask</button>
+      </form>
+      <div class="ask-examples" id="ask-examples" aria-label="Example questions"></div>
+    </section>
 
     <div class="hq-grid mt-16">
       <section class="card" aria-labelledby="feed-title">

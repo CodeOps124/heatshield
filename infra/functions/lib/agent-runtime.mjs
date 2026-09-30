@@ -22,6 +22,24 @@ export class AgentError extends Error {
   }
 }
 
+/**
+ * Earlier turns as Converse messages: text only, starting with the user and alternating (Converse
+ * rejects anything else), so a client cannot smuggle tool results or a system turn into it.
+ */
+export function conversation(history = []) {
+  const out = [];
+  for (const h of Array.isArray(history) ? history : []) {
+    const role = h?.role === 'assistant' ? 'assistant' : h?.role === 'user' ? 'user' : null;
+    const text = typeof h?.text === 'string' ? h.text.trim() : '';
+    if (!role || !text) continue;
+    if (!out.length && role !== 'user') continue;
+    if (out.length && out.at(-1).role === role) out.at(-1).content[0].text += `\n${text}`;
+    else out.push({ role, content: [{ text }] });
+  }
+  if (out.length && out.at(-1).role === 'user') out.pop(); // the new question follows
+  return out;
+}
+
 const toolSpec = (t) => ({
   toolSpec: { name: t.name, description: t.description, inputSchema: { json: t.inputSchema } },
 });
@@ -59,9 +77,11 @@ export function extractJson(text) {
  * @param {Function} [p.validate] (text) => value; throws if the answer is unusable. On failure the
  *                                model gets `repairs` extra turns to correct itself (seeing the error),
  *                                e.g. when it emits malformed JSON — observed live on 2026-09-29.
+ * @param {Function} [p.repairMessage] (error) => text sent back after a failed validation
+ * @param {Array} [p.history]     earlier turns of a conversation, [{ role: 'user'|'assistant', text }]
  * @returns {{ text, value, model, turns, toolCalls, usage, stopReason, repaired }}
  */
-export async function runAgent({ agent, input, converse, deadline = Date.now() + 20_000, now = Date.now, validate = null, repairs = 1 }) {
+export async function runAgent({ agent, input, converse, deadline = Date.now() + 20_000, now = Date.now, validate = null, repairs = 1, repairMessage = null, history = [] }) {
   const tools = agent.tools ?? [];
   const byName = new Map(tools.map((t) => [t.name, t]));
   const maxTurns = (agent.maxTurns ?? 6) + (validate ? repairs : 0);
@@ -72,7 +92,7 @@ export async function runAgent({ agent, input, converse, deadline = Date.now() +
   // Model chain: fall back to the next model only if the FIRST call fails (switching models mid
   // conversation would mix tool-use ids between providers).
   for (const modelId of agent.models.filter(Boolean)) {
-    const messages = [{ role: 'user', content: [{ text: input }] }];
+    const messages = [...conversation(history), { role: 'user', content: [{ text: input }] }];
     let repairsLeft = validate ? repairs : 0;
     let repaired = 0;
     try {
@@ -93,12 +113,13 @@ export async function runAgent({ agent, input, converse, deadline = Date.now() +
         usage.outputTokens += res.usage?.outputTokens ?? 0;
         const message = res.output?.message;
         if (!message) throw new AgentError('Empty model response', { code: 'empty' });
-        messages.push(message);
+        // Reasoning blocks are the model's own scratch work; they are not sent back.
+        messages.push({ ...message, content: (message.content ?? []).filter((c) => !c.reasoningContent) });
 
         if (res.stopReason === 'tool_use') {
-          const results = [];
-          for (const block of message.content ?? []) {
-            if (!block.toolUse) continue;
+          // Tool calls asked for in the same turn run together (every HeatShield tool is a read);
+          // results go back in the order they were asked for.
+          const results = await Promise.all((message.content ?? []).filter((b) => b.toolUse).map(async (block) => {
             const { toolUseId, name, input: args } = block.toolUse;
             const tool = byName.get(name);
             const started = now();
@@ -113,8 +134,8 @@ export async function runAgent({ agent, input, converse, deadline = Date.now() +
               content = { error: err.message };
             }
             toolCalls.push({ name, ok: status === 'success', ms: now() - started });
-            results.push({ toolResult: { toolUseId, content: [{ json: content }], status } });
-          }
+            return { toolResult: { toolUseId, content: [{ json: content }], status } };
+          }));
           messages.push({ role: 'user', content: results });
           continue;
         }
@@ -129,7 +150,7 @@ export async function runAgent({ agent, input, converse, deadline = Date.now() +
           if (repairsLeft <= 0) throw new AgentError(`Output failed validation: ${err.message}`, { code: 'invalid_output', cause: err });
           repairsLeft -= 1;
           repaired += 1;
-          messages.push({ role: 'user', content: [{ text: `Your reply could not be used: ${err.message}. Reply again with ONLY the corrected JSON object and nothing else.` }] });
+          messages.push({ role: 'user', content: [{ text: repairMessage ? repairMessage(err) : `Your reply could not be used: ${err.message}. Reply again with ONLY the corrected JSON object and nothing else.` }] });
         }
       }
       throw new AgentError(`Agent did not finish within ${maxTurns} turns`, { code: 'max_turns' });

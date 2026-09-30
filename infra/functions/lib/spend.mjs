@@ -4,6 +4,7 @@
  *   Amazon Nova 2 Lite  0.33 in / 2.75 out
  *   Amazon Nova Pro     0.80 in / 3.20 out
  *   Claude Haiku 4.5    1.10 in / 5.50 out  (AmazonBedrockService, anthropic.claude-haiku-4-5, standard)
+ *   Kimi K2.5           0.60 in / 3.00 out  (checked 30 Sep 2026, on-demand standard)
  * Amazon Polly (US$ per million characters): neural 16, standard 4. Polly reports the billed
  * characters of every request, and "Listen" records them.
  */
@@ -11,14 +12,15 @@ export const PRICES = Object.freeze({
   'us.amazon.nova-2-lite-v1:0': { input: 0.33, output: 2.75 },
   'us.amazon.nova-pro-v1:0': { input: 0.8, output: 3.2 },
   'us.anthropic.claude-haiku-4-5-20251001-v1:0': { input: 1.1, output: 5.5 },
+  'moonshotai.kimi-k2.5': { input: 0.6, output: 3.0 },
 });
 
 export const CHARACTER_PRICES = Object.freeze({ 'polly:neural': 16, 'polly:standard': 4 });
 
 /** Agents whose runs can call a model. (The Dispatcher and the plans log record no tokens.) */
 export const MODEL_AGENTS = Object.freeze(['sol', 'mira', 'lexi', 'vera', 'kai', 'otto', 'quinn', 'iris']);
-/** Everything that spends on AI: the agents, and plans read aloud. */
-export const SPEND_SOURCES = Object.freeze([...MODEL_AGENTS, 'voice']);
+/** Everything that spends on AI: the agents, plans read aloud, and Ask the team. */
+export const SPEND_SOURCES = Object.freeze([...MODEL_AGENTS, 'voice', 'ask']);
 
 const round4 = (x) => Math.round(x * 10_000) / 10_000;
 

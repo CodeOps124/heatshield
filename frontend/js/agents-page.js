@@ -8,21 +8,6 @@ const $ = (id) => document.getElementById(id);
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const POLL_MS = 20_000;
 
-// Real, hot places (the same ones the read-only demo group watches).
-const PLACES = [
-  { name: 'Karachi', lat: 24.86, lon: 67.01 }, { name: 'Dubai', lat: 25.2, lon: 55.27 },
-  { name: 'New Delhi', lat: 28.61, lon: 77.21 }, { name: 'Cuiabá', lat: -15.6, lon: -56.1 },
-  { name: 'Phoenix', lat: 33.45, lon: -112.07 }, { name: 'Lagos', lat: 6.45, lon: 3.39 },
-  { name: 'Ho Chi Minh City', lat: 10.82, lon: 106.63 }, { name: 'Dhaka', lat: 23.81, lon: 90.41 },
-  { name: 'Mombasa', lat: -4.04, lon: 39.67 }, { name: 'Manila', lat: 14.6, lon: 120.98 },
-];
-
-// Profiles as they read in a sentence ("a plan for a pregnant person", not "for pregnant").
-const WHO = {
-  outdoor_worker: 'an outdoor worker', elderly: 'an older adult', chronic_condition: 'someone with a chronic condition',
-  child: 'a young child', pregnant: 'a pregnant person', general: 'the general public',
-};
-
 let data = null;
 let selected = 'sol';
 
@@ -304,101 +289,129 @@ $('kai-btn').addEventListener('click', async (e) => {
   poll();
 });
 
-// "Give the team a task": a REAL action plan request. Mira writes, Lexi and Vera review; the office
-// replays the review rounds the server actually ran (returned with the plan).
-let lastTask = '';
-$('task-btn').addEventListener('click', async (e) => {
-  busy(e.currentTarget, 12_000);
-  let place; let profile; let lang;
-  do {
-    place = PLACES[Math.floor(Math.random() * PLACES.length)];
-    profile = Object.keys(PROFILES)[Math.floor(Math.random() * Object.keys(PROFILES).length)];
-    lang = Object.keys(LANGUAGES)[Math.floor(Math.random() * Object.keys(LANGUAGES).length)];
-  } while (`${place.name}${profile}${lang}` === lastTask);
-  lastTask = `${place.name}${profile}${lang}`;
-  const who = WHO[profile] ?? PROFILES[profile].label.toLowerCase();
-  const langName = LANGUAGES[lang].native;
+// ---------------------------------------------------------------- Ask the team
+// A person's own question. On the server, Kai assigns it to the agents' real tools and code checks
+// every number in the answer; here the office replays the steps they actually took.
+const EXAMPLES = [
+  'When should my construction crew in Karachi start work tomorrow?',
+  'Is it safe to go for a run in Phoenix this evening?',
+  'Write a heat plan for my grandmother in Delhi, in Hindi',
+  'How accurate is the heat forecast in Dhaka?',
+  'My coworker is confused and his skin is hot and dry. What do I do?',
+  'هل الحر خطير في دبي اليوم؟',
+  'Is HeatShield working right now?',
+];
+const conversationLog = []; // [{ role, text }], sent back so follow-up questions have context
+const agentName = (id) => AGENT_META[id]?.name ?? id;
 
-  const out = $('task-result');
-  out.hidden = false;
-  clear(out).append(el('h2', {}, `Task: an action plan for ${who} in ${place.name}, in ${langName}`),
-    el('p', { class: 'loading-text' }, el('span', { class: 'spinner', 'aria-hidden': 'true' }), 'Mira is writing; Lexi and Vera will review before anything is shown…'));
+function who(id) {
+  const tag = el('span', { class: 'ask-who' }, agentName(id));
+  if (AGENT_META[id]?.color) tag.style.setProperty('--agent', AGENT_META[id].color); // CSSOM: the CSP allows no inline styles
+  return tag;
+}
 
-  live.office.setTemp('mira', 'working', 60_000);
-  live.say('mira', `Writing a plan for ${who} in ${place.name}, in ${langName}…`, 'working', 0);
-  live.say('lexi', 'Waiting for Mira\'s draft…', 'info', 0);
-  live.say('vera', 'Waiting for Mira\'s draft…', 'info', 0);
+/** The answer as text, line by line; only HeatShield's own pages become links. */
+function answerBody(text, lang, dir) {
+  const box = el('div', { class: 'ask-answer', lang, dir });
+  for (const line of text.split('\n')) {
+    if (!line.trim()) continue;
+    const p = el('p', {});
+    // Links: "/page" only, never "//host" (a protocol-relative URL leaves the site).
+    for (const part of line.split(/(\[[^\]]+\]\(\/(?!\/)[^)\s]*\)|(?<![\w/])\/[?#][^\s)]+)/g)) {
+      if (!part) continue;
+      const md = part.match(/^\[([^\]]+)\]\((\/(?!\/)[^)\s]*)\)$/);
+      if (md) p.append(el('a', { href: md[2] }, md[1]));
+      else if (/^\/[?#]/.test(part)) p.append(el('a', { href: part }, part.startsWith('/#groups') ? 'Create a group' : 'Open this check and sign up for alerts'));
+      else p.append(part);
+    }
+    box.append(p);
+  }
+  return box;
+}
 
-  let res;
+function traceList(trace) {
+  const items = [];
+  for (const t of trace) {
+    items.push(el('li', {}, who(t.agent), ` ${t.action}${t.ok ? '' : ' (did not work)'}`, el('span', { class: 'hint' }, ` · ${(t.ms / 1000).toFixed(1)} s`)));
+    for (const s of t.steps ?? []) items.push(el('li', { class: 'ask-sub' }, who(s.agent), ` ${s.action}`));
+  }
+  return el('ol', { class: 'ask-trace' }, items);
+}
+
+/** Replays the real steps in the office: Kai hands each task to the agent who did it. */
+async function replay(res) {
+  for (const t of res.trace) {
+    if (t.agent !== 'kai') { live.office.passPaper('kai', t.agent); await sleep(700); }
+    live.office.setTemp(t.agent, 'working', 1400);
+    live.say(t.agent, t.action, t.ok ? 'done' : 'error', 10_000);
+    for (const s of t.steps ?? []) {
+      live.office.passPaper(t.agent, s.agent);
+      await sleep(650);
+      live.say(s.agent, s.action, 'done', 9000);
+    }
+    await sleep(450);
+  }
+  live.office.setTemp('kai', 'idle', 1);
+  const helpers = res.agents.filter((a) => a !== 'kai').map(agentName);
+  live.say('kai', `Answered in ${(res.durationMs / 1000).toFixed(1)} s${helpers.length ? ` with ${helpers.join(', ')}` : ''}.`, 'done', 12_000);
+  for (const id of res.agents) live.office.celebrate(id);
+}
+
+async function askTeam(question) {
+  const log = $('ask-log');
+  const input = $('ask-input');
+  const send = $('ask-send');
+  log.append(el('div', { class: 'ask-msg user', dir: 'auto' }, question));
+  const pending = el('div', { class: 'ask-msg team', 'aria-busy': 'true' },
+    el('p', { class: 'loading-text' }, el('span', { class: 'spinner', 'aria-hidden': 'true' }), 'Kai is reading your question and assigning it to the team…'));
+  log.append(pending);
+  pending.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+  send.disabled = true;
+  input.disabled = true;
+  live.office.setTemp('kai', 'working', 30_000);
+  live.say('kai', 'Reading a question and assigning it to the team…', 'working', 0);
   try {
-    res = await api(`/api/guidance?${qs({ lat: place.lat, lon: place.lon, profile, lang })}`);
+    const res = await api('/api/ask', { method: 'POST', body: { message: question, history: conversationLog.slice(-4), language: (navigator.language || 'en').slice(0, 2) } });
+    conversationLog.push({ role: 'user', text: question }, { role: 'assistant', text: res.answer.slice(0, 500) });
+    replay(res); // the office catches up while the answer is already readable
+    const helpers = res.agents.filter((a) => a !== 'kai').map(agentName);
+    pending.removeAttribute('aria-busy');
+    pending.replaceChildren(
+      answerBody(res.answer, res.language, res.dir),
+      el('details', { class: 'ask-how' },
+        el('summary', {}, `${helpers.length ? `Kai asked ${helpers.join(', ')}` : 'Kai answered directly'} · ${(res.durationMs / 1000).toFixed(1)} s`),
+        res.trace.length ? traceList(res.trace) : null,
+        el('p', { class: 'hint' }, `Coordinated by ${modelName(res.model)} on Amazon Bedrock. Every number was checked against what the tools returned${res.checks.rewrites ? '; the first answer was sent back to be fixed' : ''}${res.checks.removedSentences ? `; ${res.checks.removedSentences} sentence(s) that could not be verified were removed` : ''}.`)),
+    );
   } catch (err) {
-    live.office.setTemp('mira', 'idle', 1);
-    live.say('mira', err.message, 'error', 10_000);
-    live.say('lexi', '');
-    live.say('vera', '');
-    notice(out, err.message);
-    return;
+    live.office.setTemp('kai', 'idle', 1);
+    live.say('kai', err.message, err.status === 429 ? 'info' : 'error', 10_000);
+    pending.removeAttribute('aria-busy');
+    pending.replaceChildren(el('p', { class: 'notice error' }, err.message));
+  } finally {
+    send.disabled = false;
+    input.disabled = false;
+    input.value = '';
+    poll();
   }
-  const g = res.guidance;
-  const review = g.review ?? {};
-  const secs = g.durationMs ? `${(g.durationMs / 1000).toFixed(1)} s` : '';
+}
 
-  if (g.source === 'cache') {
-    live.office.setTemp('mira', 'idle', 1);
-    live.say('mira', `Same situation already written and approved earlier; reused in ${secs}.`, 'done', 12_000);
-    live.say('lexi', 'Approved earlier ✓', 'done', 8000);
-    live.say('vera', 'Approved earlier ✓', 'done', 8000);
-  } else {
-    // Replay each real review round.
-    const rounds = review.rounds?.length ? review.rounds : [{ language: review.language?.verdict, safety: review.safety?.verdict, blocking: [] }];
-    for (let i = 0; i < rounds.length; i += 1) {
-      const r = rounds[i];
-      live.say('mira', i === 0 ? 'Draft ready. Sending it for review.' : `Revision ${i} ready. Sending it back.`, 'working', 0);
-      live.office.passPaper('mira', 'lexi');
-      live.office.passPaper('mira', 'vera');
-      await sleep(950);
-      live.office.setTemp('lexi', 'working', 1600);
-      live.office.setTemp('vera', 'working', 1600);
-      await sleep(1600);
-      const blocked = (r.blocking ?? [])[0];
-      live.say('lexi', r.language === 'approve' ? 'Language ✓ real words, right meaning' : `Sent back: ${blocked ?? 'language problem'}`, r.language === 'approve' ? 'done' : 'error', 0);
-      live.say('vera', r.safety === 'approve' ? 'Safety ✓ matches the vetted facts' : `Sent back: ${blocked ?? 'safety problem'}`, r.safety === 'approve' ? 'done' : 'error', 0);
-      if (r.language !== 'approve') live.office.attention('lexi', 1500);
-      if (r.safety !== 'approve') live.office.attention('vera', 1500);
-      await sleep(1700);
-    }
-    live.office.setTemp('mira', 'idle', 1);
-    if (g.source === 'bedrock') {
-      live.say('mira', `Published after ${review.revisions ?? 0} revision(s), ${secs}.`, 'done', 12_000);
-      for (const id of ['mira', 'lexi', 'vera']) live.office.celebrate(id);
-    } else {
-      live.say('mira', 'The reviewers rejected my drafts, so safe pre-written advice is shown instead.', 'error', 12_000);
-    }
-    setTimeout(() => { live.say('lexi', '', 'info', 1); live.say('vera', '', 'info', 1); }, 9000);
-  }
-
-  // Result card: the plan, in its language, with the reviewer's English back-translation.
-  const dir = LANGUAGES[g.language]?.dir ?? 'ltr';
-  const bt = review.language?.backTranslation;
-  clear(out).append(
-    el('h2', {}, `Task: an action plan for ${who} in ${place.name}, in ${langName}`),
-    el('p', { class: 'hint' },
-      g.source === 'cache' ? `Reused an approved plan (${secs}).`
-        : g.source === 'bedrock' ? `Written by ${modelName(g.model)}, ${review.status === 'approved' ? 'approved by Lexi and Vera' : review.status}${review.revisions ? ` after ${review.revisions} revision(s)` : ''} · ${secs}`
-          : `Pre-written safety guidance (${fallbackText(g.fallbackReason)}) · ${secs}`,
-      ` · Heat now: ${TIER_LABELS[res.risk.current.tier]}`),
-    el('div', { class: 'task-plan', lang: g.language, dir },
-      el('p', { class: 'guidance-headline' }, g.headline),
-      el('ol', { class: 'guidance-actions' }, g.actions.map((x) => el('li', {}, el('span', {}, x)))),
-      el('div', { class: 'callout alert' }, el('p', {}, g.seekHelp))),
-    bt && g.language !== 'en' ? el('details', { class: 'table-view', open: true }, el('summary', {}, 'Lexi\'s literal English back-translation'),
-      el('p', {}, el('strong', {}, bt.headline)), el('ul', { class: 'plain-list' }, bt.actions.map((x) => el('li', {}, x))), el('p', {}, bt.seekHelp)) : null,
-    (review.rounds ?? []).length ? el('details', { class: 'table-view' }, el('summary', {}, 'Review rounds'),
-      el('ol', { class: 'plain-list' }, review.rounds.map((r, i) => el('li', {}, `Round ${i + 1}: Lexi ${r.language === 'approve' ? '✓' : '✗'} · Vera ${r.safety === 'approve' ? '✓' : '✗'}${r.blocking?.length ? ` · ${r.blocking.join(' / ')}` : ''}`)))) : null,
-    el('p', { class: 'mt-16' }, el('a', { href: `/?${qs({ place: place.name, lat: place.lat, lon: place.lon, profile, lang })}#check` }, `Open the full check for ${place.name}`)),
-  );
-  poll();
+$('ask-form').addEventListener('submit', (e) => {
+  e.preventDefault();
+  const question = $('ask-input').value.trim();
+  if (question && !$('ask-send').disabled) askTeam(question);
+});
+$('ask-input').addEventListener('keydown', (e) => {
+  if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) { e.preventDefault(); $('ask-form').requestSubmit(); }
+});
+$('ask-examples').append(...EXAMPLES.map((q) => {
+  const b = el('button', { type: 'button', class: 'ask-example', dir: 'auto' }, q);
+  b.addEventListener('click', () => { if (!$('ask-send').disabled) { $('ask-input').value = q; askTeam(q); } });
+  return b;
+}));
+$('task-btn').addEventListener('click', () => {
+  $('ask').scrollIntoView({ behavior: 'smooth', block: 'start' });
+  $('ask-input').focus({ preventScroll: true });
 });
 
 // ---------------------------------------------------------------- boot

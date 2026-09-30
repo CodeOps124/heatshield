@@ -77,6 +77,7 @@ export const MODEL_NAMES = [
   [/nova-lite/, 'Amazon Nova Lite'],
   [/nova-micro/, 'Amazon Nova Micro'],
   [/nova-pro/, 'Amazon Nova Pro'],
+  [/kimi-k2\.5/, 'Kimi K2.5'],
 ];
 export const modelName = (id) => MODEL_NAMES.find(([re]) => re.test(id ?? ''))?.[1] ?? id;
 

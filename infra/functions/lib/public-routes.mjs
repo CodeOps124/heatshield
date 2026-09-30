@@ -6,12 +6,13 @@
  *   GET /api/guidance?lat=..&lon=..&profile=..&lang=..
  *   GET /api/notice             the operator's site-wide notice, if any
  *   GET /api/speech?key=..      a plan read aloud (Amazon Polly): only plans HeatShield wrote, by key
+ *   POST /api/ask               Ask the team: a question, answered by the agents (read-only tools)
  */
 import { assessRisk, PROFILES } from './heat.mjs';
 import { isLanguage } from './languages.mjs';
 import { canSpeak } from './speech.mjs';
 import { roundCoord } from './weather.mjs';
-import { HttpError, json, router } from './http.mjs';
+import { HttpError, json, parseBody, router } from './http.mjs';
 import { ValidationError, cleanText, parseCoord } from './util.mjs';
 
 export function parseRiskQuery(q = {}) {
@@ -32,7 +33,7 @@ export function parseLanguage(value) {
 // no matter how many people click: at most 144 Sol runs and 720 Otto runs a day.
 export const ON_DEMAND_COOLDOWN_MS = { sol: 10 * 60_000, otto: 2 * 60_000 };
 
-export function createPublicApi({ weather, guidance, version, region, agentsApi = null, agentLog = null, runAgentNow = null, control = null, speech = null, now = () => Date.now() }) {
+export function createPublicApi({ weather, guidance, version, region, agentsApi = null, agentLog = null, runAgentNow = null, control = null, speech = null, ask = null, now = () => Date.now() }) {
   return router({
     'GET /api/notice': async () => json(200, { notice: control ? await control.notice() : null }),
 
@@ -98,6 +99,12 @@ export function createPublicApi({ weather, guidance, version, region, agentsApi 
       const result = await guidance.getGuidance(risk, lang);
       const listen = Boolean(speech && result.speechKey && canSpeak(result.language));
       return json(200, { lat, lon, risk, guidance: { ...result, listen, durationMs: now() - started } });
+    },
+
+    'POST /api/ask': async (event) => {
+      if (!ask) throw new HttpError(404, 'not_found', 'Not available');
+      const body = parseBody(event);
+      return json(200, await ask.ask({ message: body.message, history: body.history, language: body.language }));
     },
 
     'GET /api/speech': async (event) => {
