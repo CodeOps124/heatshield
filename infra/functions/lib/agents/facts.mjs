@@ -132,6 +132,13 @@ export const FACTS = [
     tags: 'emergency stroke confusion fainting call',
     pinned: true,
   },
+  {
+    // Checked against the NIOSH heat-related illness page, 30 Sep 2026 (it gives no advice about drinking for heat stroke).
+    id: 'heat-stroke-first-aid',
+    text: 'While waiting for help with heat stroke: stay with the person, move them to a shaded, cool area and remove outer clothing, cool them quickly with cold water or ice, place cold wet cloths or ice on the head, neck, armpits and groin (or soak their clothing with cool water), and circulate the air around them.',
+    source: 'CDC/NIOSH',
+    tags: 'first aid emergency stroke cool cooling ice cloths clothing wait help collapse confused faint',
+  },
 ];
 
 export const FACTS_BY_ID = new Map(FACTS.map((f) => [f.id, f]));

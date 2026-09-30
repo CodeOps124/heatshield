@@ -15,7 +15,7 @@ export const ROSTER = [
   {
     id: 'mira', name: 'Mira', role: 'Health Advisor', desk: 'Advice desk',
     expertise: 'Public-health communication grounded in CDC/NIOSH/NWS guidance.',
-    algorithm: 'Okapi BM25 retrieval over a vetted 21-fact library (only the facts relevant to this person reach the model)',
+    algorithm: 'Okapi BM25 retrieval over a vetted 22-fact library (only the facts relevant to this person reach the model)',
     decides: 'What this person should do in the coming hours; rewrites when the reviewers push back.',
     model: 'Claude Haiku 4.5 → Amazon Nova 2 Lite', tools: [],
     trigger: 'Every new action plan (cached plans are reused)', schedule: null,

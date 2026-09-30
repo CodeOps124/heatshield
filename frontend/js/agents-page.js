@@ -1,6 +1,6 @@
 // Agent HQ: live office + activity feed + agent details + buttons that run real agents.
 import { api, qs } from './api.js';
-import { el, clear, notice, initThemeToggle, showVersion, PROFILES, LANGUAGES, TIER_LABELS, modelName, fallbackText, showSiteNotice } from './ui.js';
+import { el, clear, notice, initThemeToggle, showVersion, PROFILES, LANGUAGES, TIER_LABELS, modelName, fallbackText, showSiteNotice, renderGuidance } from './ui.js';
 import { mountOffice, AGENT_META } from './office-live.js';
 import { OFFICE_W } from './pixel-office.js';
 
@@ -376,13 +376,20 @@ async function askTeam(question) {
     replay(res); // the office catches up while the answer is already readable
     const helpers = res.agents.filter((a) => a !== 'kai').map(agentName);
     pending.removeAttribute('aria-busy');
-    pending.replaceChildren(
+    // Mira's plan, exactly as Lexi and Vera approved it (with Listen where Polly has a voice).
+    let planCard = null;
+    if (res.plan) {
+      planCard = el('div', { class: 'ask-plan' });
+      renderGuidance(planCard, res.plan);
+    }
+    pending.replaceChildren(...[
       answerBody(res.answer, res.language, res.dir),
+      planCard,
       el('details', { class: 'ask-how' },
         el('summary', {}, `${helpers.length ? `Kai asked ${helpers.join(', ')}` : 'Kai answered directly'} · ${(res.durationMs / 1000).toFixed(1)} s`),
         res.trace.length ? traceList(res.trace) : null,
         el('p', { class: 'hint' }, `Coordinated by ${modelName(res.model)} on Amazon Bedrock. Every number was checked against what the tools returned${res.checks.rewrites ? '; the first answer was sent back to be fixed' : ''}${res.checks.removedSentences ? `; ${res.checks.removedSentences} sentence(s) that could not be verified were removed` : ''}.`)),
-    );
+    ].filter(Boolean)); // DOM replaceChildren would print "null"
   } catch (err) {
     live.office.setTemp('kai', 'idle', 1);
     live.say('kai', err.message, err.status === 429 ? 'info' : 'error', 10_000);

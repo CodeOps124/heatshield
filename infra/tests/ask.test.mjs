@@ -117,15 +117,27 @@ test('follow-ups: earlier turns are sent as plain alternating text; a client can
   assert.equal(w.calls[0].messages[2].content[0].text, 'And tomorrow?');
 });
 
-test('Mira\'s plan through Ask: reviewed by Lexi and Vera, and shown in the trace', async () => {
-  const plan = { headline: 'Dangerous heat today.', actions: ['Rest in shade.', 'Drink water.'], seekHelp: 'Call your local emergency number if confused.', language: 'hi', source: 'bedrock', review: { revisions: 1 } };
+test('Mira\'s plan through Ask (live, 30 Sep: Kai retold a reviewed Hindi plan): the plan is returned as reviewed, and the answer is labelled with the language it is written in', async () => {
+  const plan = { headline: 'आज बहुत गर्मी है।', actions: ['छाया में आराम करें।', 'पानी पीते रहें।'], seekHelp: 'भ्रम हो तो स्थानीय आपातकालीन नंबर पर कॉल करें।', language: 'hi', source: 'bedrock', model: 'm', review: { revisions: 1 }, speechKey: 'a'.repeat(64) };
   let budget = null;
   const guidance = { getGuidance: async (_risk, lang, opts) => { budget = opts.budgetMs; return { ...plan, language: lang }; } };
-  const w = world({ guidance, replies: [call(['write_action_plan', { lat: 28.61, lon: 77.21, place: 'Delhi', profile: 'elderly', language: 'hi' }]), say('Here is the plan: rest in shade and drink water.')] });
+  const w = world({ guidance, replies: [call(['write_action_plan', { lat: 28.61, lon: 77.21, place: 'Delhi', profile: 'elderly', language: 'hi' }]), say('यह मीरा की योजना है, जिसे लेक्सी और वेरा ने जांचा है।')] });
   const r = await w.service.ask({ message: 'Write a heat plan for my grandmother in Delhi, in Hindi' });
   assert.ok(budget >= 6000 && budget <= 16_000);
   assert.deepEqual(r.trace[0], { agent: 'mira', action: 'Wrote a plan for Delhi in Hindi', ms: r.trace[0].ms, ok: true, steps: [{ agent: 'lexi', action: 'Language checked (1 revision)' }, { agent: 'vera', action: 'Safety checked against the vetted facts' }] });
   assert.deepEqual(r.agents, ['kai', 'mira', 'lexi', 'vera']);
+  assert.deepEqual([r.plan.headline, r.plan.actions, r.plan.seekHelp], [plan.headline, plan.actions, plan.seekHelp], 'exactly as reviewed');
+  assert.deepEqual([r.plan.listen, r.plan.source], [true, 'bedrock'], 'Hindi has a Polly voice');
+  assert.deepEqual([r.language, r.dir], ['hi', 'ltr'], 'asked in English, answered in Hindi as requested');
+  assert.match(w.calls[1].messages.at(-1).content[0].toolResult.content[0].json.shownToThePersonAsIs ? 'yes' : 'no', /yes/);
+});
+
+test('Quinn\'s daily audit answers for the cities he covers, so the chat and Agent HQ agree', async () => {
+  const w = world({ replies: [call(['forecast_track_record', { lat: 23.8, lon: 90.4, place: 'Dhaka' }]), say('The day-ahead forecast was off by 1.2 °C.')] });
+  await w.agentLog.putState('quinn', 'latest', { cities: [{ place: 'Dhaka, Bangladesh', lat: 23.81, lon: 90.41, lead1: { days: 14, maeC: 1.2, biasC: 0.6, tierAgreement: 0.64 }, lead3: { days: 14, maeC: 1.4, biasC: 0.8 }, danger: { hits: 6, misses: 2, falseAlarms: 3 } }] });
+  const r = await w.service.ask({ message: 'How accurate is the forecast in Dhaka?' });
+  assert.equal(r.trace[0].ok, true, 'no download needed (the fake would throw)');
+  assert.equal(r.answer, 'The day-ahead forecast was off by 1.2 °C.');
 });
 
 test('limits: a clear question, the AI kill switch and budget, and at most 30 questions per 10 minutes for everyone', async () => {
