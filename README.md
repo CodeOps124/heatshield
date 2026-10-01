@@ -20,13 +20,13 @@ Built for the AWS Student Builder Group **Zero to Shipped** hackathon · `#socia
 | Technical innovation | [Eight agents](#eight-ai-agents), each pairing a real algorithm (Excess Heat Factor, a 51-member ensemble, BM25, naive-Bayes language ID, earliest-deadline-first scheduling, EWMA control charts) with a model on Amazon Bedrock, while code makes the final call. [Ask the team](#ask-the-team): a coordinator model chosen by measuring five, whose answers are checked by code. Amazon Polly reads plans aloud. |
 | Implementation quality | Live on AWS from one SAM template. 157 unit and regression tests, and headless-Chrome tests against production. Nine CloudWatch alarms, a dead-letter queue and a hard AI budget ([Always on](#always-on-and-under-control)). Every incident the live agents hit became a regression test ([What a live system taught us](#what-a-live-system-taught-us)). |
 | Community impact | WHO and ILO numbers ([The problem](#the-problem)). One leader protects a whole group with one link ([the live demo dashboard](https://d3tda9dyutl7ux.cloudfront.net/group.html#g=5NpOU_pMXAK_&k=Q51QdY6DIZK7P4pLCF9B8KAiofrIcFgj)). Plans in 13 languages, read aloud for people who find reading hard. |
-| Storytelling | The [demo video](https://d3tda9dyutl7ux.cloudfront.net/demo.html), recorded on the live site with nothing mocked, and Agent HQ, which draws the agents' real runs live. |
+| Storytelling | The [demo video](https://d3tda9dyutl7ux.cloudfront.net/demo.html), its app screens recorded on the live site with nothing mocked, and Agent HQ, which draws the agents' real runs live. |
 
 ---
 
 ## The problem
 
-Heat is linked to an estimated **489,000 deaths a year** worldwide ([WHO](https://www.who.int/news-room/fact-sheets/detail/climate-change-heat-and-health), 2000–2019 average). **2.4 billion of the world's 3.4 billion workers** are likely to be exposed to excessive heat at work, and heat causes an estimated **18,970 work-related deaths a year** ([ILO, April 2024](https://www.ilo.org/resource/news/newly-launched-global-campaign-tackles-impact-heat-stress-workers-worldwide)). Those most at risk are older adults, people with chronic illness, outdoor and manual workers, and people in informal housing without cooling (WHO).
+Heat is linked to an estimated **489,000 deaths a year** worldwide ([WHO](https://www.who.int/news-room/fact-sheets/detail/climate-change-heat-and-health), 2000–2019 average). **2.4 billion of the world's 3.4 billion workers** are likely to be exposed to excessive heat at work, and heat causes an estimated **18,970 work-related deaths a year** ([ILO, 2024](https://www.ilo.org/resource/news/newly-launched-global-campaign-tackles-impact-heat-stress-workers-worldwide); from its April 2024 report). Those most at risk are older adults, people with chronic illness, outdoor and manual workers, and people in informal housing without cooling (WHO).
 
 These are exactly the people least likely to get a useful warning. A forecast says "heat index 42 °C". It does not tell a delivery rider in Dubai, a grandmother living alone in Delhi, or a farm crew in Phoenix *what to do between now and tonight*, in a language they read comfortably.
 
@@ -109,7 +109,7 @@ Every tool is read-only, so a question cannot send an email or change data. Ques
 
 ## Always on, and under control
 
-HeatShield has to work at 3 a.m. during a heatwave with nobody watching, and it calls paid models from a public page. So it runs itself, repairs itself, reports to a person when it can't, and cannot overspend.
+HeatShield has to work at 3 a.m. during a heatwave with nobody watching, and it calls paid models from a public page. So it runs itself, repairs itself, reports to a person when it can't, and has a hard daily cap on AI spending.
 
 - **Nothing to forget to start.** Six EventBridge schedules run the Dispatcher and the five scheduled agents; there are no servers.
 - **Failures are retried, then kept.** A failed scheduled run is retried once, then lands in an **Amazon SQS** dead-letter queue that Otto counts and the operator can inspect.
@@ -292,7 +292,3 @@ scripts/                   deploy, eval-guidance, seed-demo, local dev server; e
 docs/                      BUILD_LOG.md (development process + AWS connection proof), DEMO_SCRIPT.md (the video, and how
                            it was made), SUBMISSION.md, architecture.svg, screenshots
 ```
-
-## License
-
-MIT, see [LICENSE](LICENSE).

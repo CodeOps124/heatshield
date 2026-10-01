@@ -4,7 +4,6 @@
   "private": true,
   "description": "HeatShield - multilingual heat-risk early warning on AWS (AWS Student Builder Group: Zero to Shipped)",
   "type": "module",
-  "license": "MIT",
   "engines": {
     "node": ">=22"
   },

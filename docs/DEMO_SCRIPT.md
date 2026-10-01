@@ -2,7 +2,7 @@
 
 **Watch:** https://d3tda9dyutl7ux.cloudfront.net/demo.html (4:34, 1080p, English captions; the MP4 and captions can be downloaded from that page).
 
-Every screen was recorded on the live site while it ran: the forecast, the plans, the agents' answers and the alert email are real, nothing is mocked or staged. Numbers on screen are whatever the live forecast said at recording time (1 Oct 2026), so the site shows different values today.
+Every app screen was recorded on the live site while it ran (the title cards and the architecture diagram are drawn for the video, and the alert email is a screenshot of the real inbox): the forecast, the plans, the agents' answers and the alert email are real, nothing is mocked or staged. Numbers on screen are whatever the live forecast said at recording time (1 Oct 2026), so the site shows different values today.
 
 | Time | On screen | Narration |
 |---|---|---|

@@ -33,7 +33,7 @@ every 15–20 minutes, and here are the signs that mean call for help", in Urdu,
   hour, with the trend, the 24-hour peak, the person's risky hours and a 4-day outlook. Older adults,
   pregnant people, young children and people with chronic conditions are warned one tier earlier.
 - **An action plan in 13 languages, checked before anyone sees it, and read aloud:** Amazon Bedrock
-  writes a headline, three concrete steps with clock times, and the warning signs to act on,
+  writes a headline, three concrete steps, and the warning signs to act on,
   grounded in vetted CDC/NIOSH facts; a language reviewer and a safety reviewer check it first.
   Amazon Polly reads it aloud in 7 of the 13 languages (no voice exists yet for the other 6).
 - **Alerts people don't have to ask for:** EventBridge Scheduler re-checks everyone hourly; Amazon
@@ -41,9 +41,9 @@ every 15–20 minutes, and here are the signs that mean call for help", in Urdu,
 - **The Community lane multiplier:** a foreman, teacher or clinic worker creates a group, shares one
   invite link, sees everyone's live risk on one private dashboard, and gets a check-in plan: who to
   contact first, by when in each person's time zone, what to ask, and for outdoor workers the safest
-  8-hour shift tomorrow.
-- **Eight AI agents run it around the clock**, and anyone can watch them in Agent HQ, a live
-  pixel-art office drawn from their real runs.
+  8-hour shift in the next day and a half.
+- **Eight AI agents run it:** five on schedules around the clock, three on every new plan. Anyone
+  can watch them in Agent HQ, a live pixel-art office drawn from their real runs.
 - **Ask the team:** type a question in any of the 13 languages. Kai assigns it to the agents' real,
   read-only tools (Sol's heat read, Quinn's audit, Mira's reviewed plan, Kai's shift search, Vera's
   vetted facts, Otto's status), and code checks every number and health statement before the answer
@@ -76,14 +76,15 @@ every 15–20 minutes, and here are the signs that mean call for help", in Urdu,
   word lists the writer follows. Both were fact-checked against their own numbers on their first live
   run, and each error found became a rule in code and a regression test.
 - **A model chosen by measurement.** For Ask the team, five Bedrock models ran the same prompts;
-  Kimi K2.5 routed 10 of 10 and invented the fewest numbers, while gpt-oss-120b invented numbers in
+  Kimi K2.5 routed 10 of 10 and tied with Nova Pro for the fewest invented numbers (1 of 5 answers), while gpt-oss-120b invented numbers in
   4 of 5 answers (including a "999" phone number) and Mistral Large 3 printed tool calls as text.
   Whatever the model, code checks each answer's numbers against the tools before it is shown.
 - **Measured, not assumed.** A live evaluation script asks the deployed API for one plan per
   language. Before calibration, 1 of 5 new plans passed review; after five measured steps, 47 of 52
   (90%), and every rejected plan contained a real error.
-- **Amazon Bedrock and Amazon Polly engineered for a public endpoint.** No user text reaches any
-  model, approved plans are cached under a hash of the exact inputs, only HeatShield's own text can
+- **Amazon Bedrock and Amazon Polly engineered for a public endpoint.** No user text reaches the
+  models that write plans, alerts or briefings (a question asked of the team is the one exception:
+  read-only tools, every answer checked by code, nothing stored), approved plans are cached under a hash of the exact inputs, only HeatShield's own text can
   be spoken, and every failure has a path: resample, next model, pre-written advice.
 
 ## Implementation quality
@@ -116,13 +117,14 @@ the AWS MCP Server), and the process is logged with real output in `docs/BUILD_L
 4. AWS behaviour was checked against the documentation before relying on it (for example that
    CloudWatch Logs can return an empty page before the matching events, and that EventBridge
    Scheduler invokes Lambda asynchronously, so retries and the dead-letter queue apply).
-5. A real browser was driven through the live site after every deploy, and what the screenshots
-   showed was fixed.
+5. A real browser was driven through the live site after major changes (every deploy also runs a
+   smoke test against the public URL), and what the screenshots showed was fixed.
 
 ## Community and market impact
 HeatShield is free and works anywhere Open-Meteo covers (the whole planet). One leader can protect
 up to 200 people per group today, and Kai tells them who to reach first and which hours to work.
-The serverless design costs almost nothing when idle, scales with use, and cannot overspend.
+The serverless design costs almost nothing when idle, scales with use, and has a hard daily cap
+on AI spending.
 Natural adopters: construction and farm crews, delivery fleets, senior-living and home-care
 networks, schools, and community health workers. Next steps: SMS/WhatsApp delivery via AWS End User
 Messaging, fluent-speaker review of each language, voices for the six languages Polly lacks, and
@@ -132,5 +134,5 @@ WBGT for occupational use.
 The heat index is a shade value (we say so on screen). Reviewer agents are models too: a rejected
 plan falls back to pre-written advice, which exists in English, Spanish and French only (other
 languages get English with a notice). Listen covers 7 of 13 languages. Quinn scores the forecast
-against the model's own analysis, not weather stations. Every plan is written by Amazon Nova models. Email is the live alert channel; SMS is not claimed. HeatShield gives safety
+against the model's own analysis, not weather stations. Every plan served today is written by Amazon Nova models (cached plans expire after 6 hours). Email is the live alert channel; SMS is not claimed. HeatShield gives safety
 information, not medical care.
