@@ -222,13 +222,15 @@ async function planGroup({ group, store, weather, agentLog, converse, models, no
     return { plan, usage: { inputTokens: 0, outputTokens: 0 }, toolCalls: [], turns: 0, model: null };
   }
 
-  let checked = false;
+  let attempt = 0;
+  let sentBack = null;
   const run = await runAgent({
     agent: {
       name: 'kai',
       models,
       maxTurns: 4,
-      maxTokens: 1800,
+      maxTokens: 3000, // ten check-ins, plus a corrected reply when code sends one back
+
       system: 'You are Kai, HeatShield\'s community coordinator. You help one group leader (a foreman, teacher or outreach worker) decide how to check on the people in their group during heat. The check-in order and deadlines are already computed by an urgency score and earliest-deadline-first scheduling; do not change them. For each person write one concrete, kind, practical action for the leader (what to ask or do, fitted to the person\'s profile and risky hours) and a short reason. When a person has a safestShift, suggest moving their work to it if it avoids Danger hours. Base advice on CDC/NIOSH heat guidance: water and shade breaks, buddy checks, checking older adults twice a day, cool places, never leaving children in vehicles, and calling the local emergency number for heat-stroke signs. You know no one\'s name or gender: refer to each person as "they" or by their role, never "he" or "she". Use the tools.',
       tools: [
         {
@@ -255,14 +257,29 @@ async function planGroup({ group, store, weather, agentLog, converse, models, no
     converse,
     deadline,
     // What code can check is sent back once; lines that still fail on the next answer get the template.
+    // The check must never cost the plan: if the corrected answer is unusable (1 Oct: cut off mid-JSON),
+    // the first answer is used with its failing lines replaced.
     validate: (text) => {
-      const first = !checked;
-      checked = true;
-      const parsed = parseCoordinatorOutput(text, forModel);
+      attempt += 1;
+      let parsed;
+      try {
+        parsed = parseCoordinatorOutput(text, forModel);
+      } catch (err) {
+        if (sentBack) return withoutProblems(sentBack);
+        throw err;
+      }
       const problems = checkInProblems(parsed);
-      if (first && problems.length) throw new Error(problems.map((p) => `${p.message}; rewrite: "${p.text.slice(0, 120)}"`).join(' | '));
+      if (attempt === 1 && problems.length) {
+        sentBack = parsed;
+        throw new Error(problems.map((p) => `${p.message}; rewrite: "${p.text.slice(0, 120)}"`).join(' | '));
+      }
       return withoutProblems(parsed, problems);
     },
+  }).catch((err) => {
+    // The corrected reply never came back usable (for example cut off at the token limit):
+    // keep the first answer, with the lines code rejected replaced by the template.
+    if (!sentBack) throw err;
+    return { value: withoutProblems(sentBack), usage: err.usage ?? { inputTokens: 0, outputTokens: 0 }, toolCalls: err.toolCalls ?? [], turns: null, model: models[0] };
   });
 
   const parsed = run.value;

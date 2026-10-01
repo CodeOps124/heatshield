@@ -160,5 +160,8 @@ export async function runAgent({ agent, input, converse, deadline = Date.now() +
       if (!firstCallFailed) break; // mid-run failure: do not restart on another model
     }
   }
-  throw lastError ?? new AgentError('No model available', { code: 'no_model' });
+  const error = lastError ?? new AgentError('No model available', { code: 'no_model' });
+  // What a failed run consumed, so a caller that recovers can still record it.
+  if (error && typeof error === 'object') Object.assign(error, { usage, toolCalls });
+  throw error;
 }

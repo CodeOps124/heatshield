@@ -522,6 +522,20 @@ test('Kai 1 Oct: a member with a heart condition was called "she"; a guessed gen
 
   // words that only contain the letters are fine
   assert.deepEqual(checkInProblems({ summary: 'Shelter here; the heat is high.', teamNote: 'Share water.', checkIns: [] }), []);
+
+  // 1 Oct 08:27 UTC: the corrected reply came back cut off, and the whole plan failed. The check must never
+  // cost the plan: the first answer is kept, with only the rejected line replaced.
+  const cutOff = { ...text('{"summary":"Check on M1 first.","checkIns":[{"ref":"M1","action":"Check that they'), stopReason: 'end_turn' };
+  const atLimit = { ...text('{"summary":"Check on M1'), stopReason: 'max_tokens' };
+  for (const second of [cutOff, atLimit]) {
+    ({ store, agentLog } = await setup());
+    replies = [toolUse, text(plan('Check that she has water and a fan.')), second];
+    const res = await runCoordinator({ store, weather: { getForecast: async () => hot() }, agentLog, models: ['m'], converse: async () => replies.shift() });
+    assert.equal(res.outcome, 'planned', second.stopReason);
+    saved = await agentLog.getState('kai', 'group#g1');
+    assert.equal(saved.checkIns[0].writtenBy, 'template', second.stopReason);
+    assert.equal(saved.summary, 'Check on M1 first.', 'the rest of the first answer is kept');
+  }
 });
 
 test('Kai 1 Oct: "move to the safest shift to avoid all danger hours" when that shift still had 3 Danger hours', () => {
