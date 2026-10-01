@@ -120,6 +120,29 @@ export function bestShift(hours, { length = 8, earliest = 4, latest = 10, standa
 }
 
 const templateAction = (row) => `Contact them ${row.checkInBy === 'now' ? 'now' : `before ${row.checkInBy}`}: ask how they feel, and go through their plan for ${row.riskyHours ?? 'the hot hours'}.`;
+const templateReason = (row) => `${TIER_LABELS[row.next12Tier]} expected; alerts from ${TIER_LABELS[row.alertTier]} for this profile.`;
+
+// Kai sees pseudonymous refs, never names or genders, so "he" or "she" is always a guess
+// (1 Oct: a member with a heart condition was called "she").
+const GENDERED = /\b(he|she|him|his|her|hers|himself|herself)\b/i;
+
+/** Model-written texts in a parsed plan that use a gendered pronoun. */
+export function genderedText(plan) {
+  return [plan.summary, plan.teamNote, ...plan.checkIns.filter((c) => c.writtenBy === 'model').flatMap((c) => [c.action, c.reason])]
+    .filter((t) => t && GENDERED.test(t));
+}
+
+/** Replaces any text that still guesses a gender with the template wording (after one chance to fix it). */
+export function withoutGendered(plan) {
+  return {
+    ...plan,
+    summary: GENDERED.test(plan.summary) ? `${plan.checkIns.length} people need a check-in.` : plan.summary,
+    teamNote: plan.teamNote && GENDERED.test(plan.teamNote) ? '' : plan.teamNote,
+    checkIns: plan.checkIns.map((c) => (c.writtenBy === 'model' && (GENDERED.test(c.action) || GENDERED.test(c.reason))
+      ? { ...c, action: templateAction(c), reason: templateReason(c), writtenBy: 'template' }
+      : c)),
+  };
+}
 
 export function parseCoordinatorOutput(text, schedule) {
   const raw = extractJson(text);
@@ -136,7 +159,7 @@ export function parseCoordinatorOutput(text, schedule) {
     checkIns: schedule.map((s) => ({
       ...s,
       action: byRef.get(s.ref)?.action || templateAction(s),
-      reason: byRef.get(s.ref)?.reason || `${TIER_LABELS[s.next12Tier]} expected; alerts from ${TIER_LABELS[s.alertTier]} for this profile.`,
+      reason: byRef.get(s.ref)?.reason || templateReason(s),
       writtenBy: byRef.has(s.ref) ? 'model' : 'template',
     })),
   };
@@ -184,13 +207,14 @@ async function planGroup({ group, store, weather, agentLog, converse, models, no
     return { plan, usage: { inputTokens: 0, outputTokens: 0 }, toolCalls: [], turns: 0, model: null };
   }
 
+  let genderChecked = false;
   const run = await runAgent({
     agent: {
       name: 'kai',
       models,
       maxTurns: 4,
       maxTokens: 1800,
-      system: 'You are Kai, HeatShield\'s community coordinator. You help one group leader (a foreman, teacher or outreach worker) decide how to check on the people in their group during heat. The check-in order and deadlines are already computed by an urgency score and earliest-deadline-first scheduling; do not change them. For each person write one concrete, kind, practical action for the leader (what to ask or do, fitted to the person\'s profile and risky hours) and a short reason. When a person has a safestShift, suggest moving their work to it if it avoids Danger hours. Base advice on CDC/NIOSH heat guidance: water and shade breaks, buddy checks, checking older adults twice a day, cool places, never leaving children in vehicles, and calling the local emergency number for heat-stroke signs. Use the tools.',
+      system: 'You are Kai, HeatShield\'s community coordinator. You help one group leader (a foreman, teacher or outreach worker) decide how to check on the people in their group during heat. The check-in order and deadlines are already computed by an urgency score and earliest-deadline-first scheduling; do not change them. For each person write one concrete, kind, practical action for the leader (what to ask or do, fitted to the person\'s profile and risky hours) and a short reason. When a person has a safestShift, suggest moving their work to it if it avoids Danger hours. Base advice on CDC/NIOSH heat guidance: water and shade breaks, buddy checks, checking older adults twice a day, cool places, never leaving children in vehicles, and calling the local emergency number for heat-stroke signs. You know no one\'s name or gender: refer to each person as "they" or by their role, never "he" or "she". Use the tools.',
       tools: [
         {
           name: 'get_checkin_schedule',
@@ -215,7 +239,15 @@ async function planGroup({ group, store, weather, agentLog, converse, models, no
     input: `Plan today's heat check-ins for the group "${group.name}". Use your tools, then reply with ONLY this JSON:\n{"summary":"2-3 sentences for the leader","checkIns":[{"ref":"M1","action":"...","reason":"..."}],"teamNote":"one line for the whole group"}`,
     converse,
     deadline,
-    validate: (text) => parseCoordinatorOutput(text, forModel),
+    // A guessed gender is sent back once; if the next answer still guesses, those lines get the template.
+    validate: (text) => {
+      const first = !genderChecked;
+      genderChecked = true;
+      const parsed = parseCoordinatorOutput(text, forModel);
+      const gendered = genderedText(parsed);
+      if (first && gendered.length) throw new Error(`you do not know anyone's gender, so refer to each person as "they" or by their role; rewrite: "${gendered[0].slice(0, 120)}"`);
+      return withoutGendered(parsed);
+    },
   });
 
   const parsed = run.value;

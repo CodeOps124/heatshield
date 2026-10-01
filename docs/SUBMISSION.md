@@ -5,7 +5,8 @@
 **Live app:** https://d3tda9dyutl7ux.cloudfront.net
 **Agent HQ (the eight agents, live):** https://d3tda9dyutl7ux.cloudfront.net/agents.html
 **Demo dashboard (read-only):** https://d3tda9dyutl7ux.cloudfront.net/group.html#g=5NpOU_pMXAK_&k=Q51QdY6DIZK7P4pLCF9B8KAiofrIcFgj
-**Repository:** `<add the public GitHub URL once published>`
+**Demo video:** https://d3tda9dyutl7ux.cloudfront.net/demo.html (4:44, captions, chapters, transcript)
+**Repository:** https://github.com/CodeOps124/heatshield
 
 ---
 
@@ -90,7 +91,7 @@ every 15–20 minutes, and here are the signs that mean call for help", in Urdu,
   HTTP API with per-route throttling and a Cognito JWT authorizer, nine least-privilege Lambda
   functions on Graviton, five on-demand DynamoDB tables, two SNS topics, an SQS dead-letter queue,
   six EventBridge schedules, nine CloudWatch alarms, X-Ray.
-- 153 unit and regression tests. Every problem the live agents hit became a regression test named
+- 155 unit and regression tests. Every problem the live agents hit became a regression test named
   after the event; headless-Chrome end-to-end tests run against production.
 - Privacy by design: locations rounded to ~1 km; emails never stored in our database (only in the
   SNS subscription, double opt-in); bearer secrets stored as SHA-256; one-click delete for members,

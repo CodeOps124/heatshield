@@ -10,7 +10,7 @@ import { createGuidanceService } from '../functions/lib/guidance.mjs';
 import { parseLanguageReview } from '../functions/lib/agents/language-reviewer.mjs';
 import { parseSafetyReview, createSafetyReviewer, evidenceInMessage, namesEmergencyNumber } from '../functions/lib/agents/safety-reviewer.mjs';
 import { runSentinel, headlineFor } from '../functions/lib/agents/sentinel.mjs';
-import { runCoordinator } from '../functions/lib/agents/coordinator.mjs';
+import { runCoordinator, genderedText } from '../functions/lib/agents/coordinator.mjs';
 import { triage, runWatchdog } from '../functions/lib/agents/watchdog.mjs';
 import { createLogsReader } from '../functions/lib/logs-reader.mjs';
 import { runAlertCheck } from '../functions/lib/alert-runner.mjs';
@@ -488,6 +488,40 @@ test('Vera and Lexi 30 Sep 06:05 UTC: a correct Arabic plan went to the fallback
   assert.ok(help('sw', 'Ishara za mapigo ya joto ni kuchanganyikiwa, kufaintia: piga simu ya dharura ya eneo lako.'));
   assert.ok(help('fr', "Si vous perdez connaissance, appelez votre numéro d'urgence local immédiatement."));
   assert.ok(!help('en', 'If you feel faint, rest in the shade.'));
+});
+
+test('Kai 1 Oct: a member with a heart condition was called "she"; a guessed gender is sent back, then replaced', async () => {
+  const plan = (action) => JSON.stringify({ summary: 'Check on M1 first.', checkIns: [{ ref: 'M1', action, reason: 'Heart condition and Danger heat.' }], teamNote: 'Water breaks for everyone.' });
+  const setup = async () => {
+    const { db, tables } = createFakeDb();
+    const store = createStore({ db, tables });
+    const agentLog = createAgentLog({ db, table: tables.agentLog });
+    await db.put({ table: 'groups', item: { groupId: 'g1', name: 'Crew' } });
+    await db.put({ table: 'locations', item: { locationId: 'l1', groupId: 'g1', name: 'Kamal', lat: 1, lon: 1, placeName: 'Dhaka', profile: 'chronic_condition' } });
+    return { store, agentLog };
+  };
+  const toolUse = { stopReason: 'tool_use', output: { message: { role: 'assistant', content: [{ toolUse: { toolUseId: 't1', name: 'get_checkin_schedule', input: {} } }] } }, usage: { inputTokens: 10, outputTokens: 5 } };
+
+  // the model fixes it when told why
+  let { store, agentLog } = await setup();
+  let replies = [toolUse, text(plan('Check that she has water and a fan.')), text(plan('Check that they have water and a fan.'))];
+  const sent = [];
+  await runCoordinator({ store, weather: { getForecast: async () => hot() }, agentLog, models: ['m'], converse: async (p) => { sent.push(JSON.stringify(p.messages)); return replies.shift(); } });
+  let saved = await agentLog.getState('kai', 'group#g1');
+  assert.equal(saved.checkIns[0].action, 'Check that they have water and a fan.');
+  assert.match(sent.at(-1), /refer to each person as \\"they\\"/);
+
+  // if it guesses again, code uses the template rather than the guess (and the plan is still made)
+  ({ store, agentLog } = await setup());
+  replies = [toolUse, text(plan('Ask him about dizziness.')), text(plan('Ask him about dizziness.'))];
+  await runCoordinator({ store, weather: { getForecast: async () => hot() }, agentLog, models: ['m'], converse: async () => replies.shift() });
+  saved = await agentLog.getState('kai', 'group#g1');
+  assert.equal(saved.checkIns[0].writtenBy, 'template');
+  assert.doesNotMatch(saved.checkIns[0].action, /\b(him|his|he)\b/i);
+  assert.equal(saved.teamNote, 'Water breaks for everyone.');
+
+  // words that only contain the letters are fine
+  assert.deepEqual(genderedText({ summary: 'Shelter here; the heat is high.', teamNote: 'Share water.', checkIns: [] }), []);
 });
 
 test('Kai: empty groups (left by end-to-end tests) are skipped, not counted as planned', async () => {

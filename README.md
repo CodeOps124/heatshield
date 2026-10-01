@@ -1,10 +1,26 @@
 # HeatShield
 
-**A weather app tells you it's 41 °C. HeatShield tells you what to do about it: for your body, your job, and in your language, before the hottest hours arrive.** Eight AI agents run it around the clock on AWS, you can watch them work, and you can ask them anything about the heat where you are.
+**A weather app tells you it's 41 °C. HeatShield tells you what to do about it: for your body, your job, and in your language, before the hottest hours arrive.** Eight AI agents run it on AWS, you can watch them work, and you can ask them anything about the heat where you are.
 
-**Live app: https://d3tda9dyutl7ux.cloudfront.net** · **Agent HQ (the agents, live): https://d3tda9dyutl7ux.cloudfront.net/agents.html**
+[![Watch the demo video](docs/screenshots/demo-thumbnail.png)](https://d3tda9dyutl7ux.cloudfront.net/demo.html)
 
-`#social-good` (Climate resilience) · `#community`
+| | |
+|---|---|
+| **Live app** | https://d3tda9dyutl7ux.cloudfront.net |
+| **Agent HQ**: the eight agents, live, and Ask the team | https://d3tda9dyutl7ux.cloudfront.net/agents.html |
+| **Demo video** (4:44, captions, chapters, transcript) | https://d3tda9dyutl7ux.cloudfront.net/demo.html |
+| **How Claude Code built it**, with the AWS MCP Server connection proof | [docs/BUILD_LOG.md](docs/BUILD_LOG.md) |
+
+Built for the AWS Student Builder Group **Zero to Shipped** hackathon · `#social-good` (Climate resilience) · `#community`
+
+### For judges: where the evidence is
+
+| Criterion | Evidence |
+|---|---|
+| Technical innovation | [Eight agents](#eight-ai-agents), each pairing a real algorithm (Excess Heat Factor, a 51-member ensemble, BM25, naive-Bayes language ID, earliest-deadline-first scheduling, EWMA control charts) with a model on Amazon Bedrock, while code makes the final call. [Ask the team](#ask-the-team): a coordinator model chosen by measuring five, whose answers are checked by code. Amazon Polly reads plans aloud. |
+| Implementation quality | Live on AWS from one SAM template. 155 unit and regression tests, and headless-Chrome tests against production. Nine CloudWatch alarms, a dead-letter queue and a hard AI budget ([Always on](#always-on-and-under-control)). Every incident the live agents hit became a regression test ([What a live system taught us](#what-a-live-system-taught-us)). |
+| Community impact | WHO and ILO numbers ([The problem](#the-problem)). One leader protects a whole group with one link ([the live demo dashboard](https://d3tda9dyutl7ux.cloudfront.net/group.html#g=5NpOU_pMXAK_&k=Q51QdY6DIZK7P4pLCF9B8KAiofrIcFgj)). Plans in 13 languages, read aloud for people who find reading hard. |
+| Storytelling | The [demo video](https://d3tda9dyutl7ux.cloudfront.net/demo.html), recorded on the live site with nothing mocked, and Agent HQ, which draws the agents' real runs live. |
 
 ---
 
@@ -21,12 +37,12 @@ These are exactly the people least likely to get a useful warning. A forecast sa
 3. **An action plan in their language, checked before anyone sees it.** Amazon Bedrock writes a headline, three concrete steps and the warning signs to watch, grounded in vetted CDC/NIOSH guidance, in any of **13 languages** (Arabic and Urdu right-to-left). Two reviewer agents check the language and the safety of every new plan first.
 4. **Plans read aloud.** For people who read with difficulty, Amazon Polly reads the plan in its own language: 7 of the 13 languages today (Polly has no Urdu, Bengali, Vietnamese, Indonesian, Tagalog or Swahili voice yet, so those plans have no Listen button rather than a voice for another language).
 5. **Warnings they don't have to ask for.** Every hour, EventBridge Scheduler re-checks everyone and Amazon SNS emails people whose risk reaches their level: at most one alert per level per day, never between 21:00 and 06:00 their time.
-6. **One person watching out for many.** A foreman, teacher or clinic worker creates a group, shares one invite link, and sees everyone's live risk on a private dashboard, worst first. An agent plans who they should check on first, and for outdoor workers, the safest shift to work tomorrow.
+6. **One person watching out for many.** A foreman, teacher or clinic worker creates a group, shares one invite link, and sees everyone's live risk on a private dashboard, worst first. An agent plans who they should check on first, and for outdoor workers, the safest 8-hour shift in the next day and a half.
 7. **Ask the team.** Type a question in any of the 13 languages ("When should my crew in Karachi start work tomorrow?", "My coworker is confused and his skin is hot and dry") and the agents answer it with their real tools, while code checks every number and every health statement against what the tools and the vetted facts say.
 
-## Eight AI agents, running 24/7
+## Eight AI agents
 
-Each agent owns a real job. **An algorithm does the part that must be exact; a model on Amazon Bedrock does the part that needs judgment; code, not the model, makes the final call.**
+Five run on schedules around the clock; Mira, Lexi and Vera write and review a plan whenever a new one is needed; Kai also coordinates every question asked of the team. Each agent owns a real job. **An algorithm does the part that must be exact; a model on Amazon Bedrock does the part that needs judgment; code, not the model, makes the final call.**
 
 | Agent | Runs | Job | The exact part (algorithm) | The judgment part (model) | What code guarantees |
 |---|---|---|---|---|---|
@@ -43,7 +59,7 @@ A ninth, non-AI worker, the **Dispatcher**, runs the hourly alert check and send
 
 **How they work together.** Agents coordinate through shared state in DynamoDB, not by calling each other: Sol publishes heat events that Kai reads; Quinn's track record for each city goes into Sol's evidence; Mira's drafts go to Lexi and Vera, and blocking issues go back to Mira for up to two revisions (if they still fail, the person gets pre-written vetted advice, never a blank screen); Iris turns Lexi's corrections into word lists that Mira gets with every later plan; Otto reads everyone's heartbeat and, when something breaks, writes an incident report that appears on Agent HQ and is emailed to the operator.
 
-**Agent HQ** ([/agents.html](https://d3tda9dyutl7ux.cloudfront.net/agents.html)) shows all of this live: a pixel-art office drawn in code from the real agent log (status lamps, speech from each agent's last real run, a wall map of Sol's cities and heat events), the activity feed, each agent's details, and buttons that run real agents on AWS behind shared cooldowns. "Give the team a task" asks for a plan and replays the review rounds the server actually ran.
+**Agent HQ** ([/agents.html](https://d3tda9dyutl7ux.cloudfront.net/agents.html)) shows all of this live: a pixel-art office drawn in code from the real agent log (status lamps, speech from each agent's last real run, a wall map of Sol's cities and heat events), the activity feed, each agent's details, and buttons that run real agents on AWS behind shared cooldowns. In [Ask the team](#ask-the-team), the office replays the steps the agents really took to answer a question, including the review rounds of any plan they wrote.
 
 ![Agent HQ: the live office](docs/screenshots/agent-hq-office.png)
 
@@ -150,7 +166,7 @@ Fully serverless, defined in one AWS SAM template ([infra/template.yaml](infra/t
 - **Heatwaves relative to local climate:** Sol computes the Excess Heat Factor (Nairn & Fawcett 2015, the method behind Australia's national heatwave service) against each city's own 1991–2020 95th percentile from the ERA5 reanalysis, because 41 °C is normal in Dubai in August and a crisis in Paris.
 - **How likely, not just how hot:** one forecast is one possible future. Sol reads the 51 members of the ECMWF ensemble for each city and computes, per day, the share of members that reach Danger and Extreme Danger. On 30 Sep, Dubai's dangerous heat was forecast by every member (100%), while Ho Chi Minh City's single Danger day was forecast by 16%, so Sol kept it at a watch.
 - **How far to trust the forecast:** Quinn compares the day-ahead and 3-day-ahead forecasts of each day's peak heat index with the same model's analysis of that day, over the last 14 days. On 30 Sep, across 10 cities: off by 1 °C on average one day ahead and 1.4 °C three days ahead; every one of Dubai's 14 Danger days was called; Dhaka had 2 missed Danger days and 3 false alarms.
-- **Safer hours, not just warnings:** for outdoor workers, Kai slides an 8-hour window over the next 36 hours of forecast and picks the start between 04:00 and 10:00 with the fewest Danger hours, then the least heat above Extreme Caution. For the demo group's Dubai delivery rider on 1 Oct: 04:00–12:00 has no Danger hours (all 8 are still Extreme Caution); the usual 07:00–15:00 has 3.
+- **Safer hours, not just warnings:** for outdoor workers, Kai slides an 8-hour window over the next 36 hours of forecast and picks the start between 04:00 and 10:00 with the fewest Danger hours, then the least heat above Extreme Caution. For the demo group's Karachi site crew on 2 Oct (planned on 1 Oct): 04:00–12:00 has no Danger hours and 2 hours of Extreme Caution; the usual 07:00–15:00 has 5 hours of Extreme Caution. The window starts at the current hour, so a plan made after 04:00 can only suggest a later start today, or tomorrow's.
 - **Profile-adjusted alert thresholds** (the heat index is objective; *when we warn you* is personal):
 
 | Profile | Alerted from | Why |
@@ -186,6 +202,7 @@ The agents run on real forecasts and real traffic, so they hit real problems. Ea
 - **The watchdog's blind spot.** Otto marked the site degraded over 10 failed calls to the primary model: every one was the known setup state (an Anthropic model configured before its access form was submitted; Amazon Nova has since been made the primary writer and the Anthropic model dropped). Otto counted log events across pages but read the lines from the first page only, and CloudWatch Logs can return an empty first page. It reads every page now.
 - **Reviewers refuted by the message itself.** A correct Arabic plan went to the English fallback: Vera's last objection proposed the sentence as written as its own "fix", and the one before asked for more heat-stroke signs while the help sentence already named the emergency number. Objections the message itself refutes are now notes.
 - **Ask the team, first live answers.** Kai retold a reviewed Hindi plan in its own words (the plan is now shown exactly as reviewed), put "call emergency services" last in a heat-stroke answer (it must come first), and once answered a first-aid question without looking up the vetted facts (health questions now require them; the library gained the NIOSH heat-stroke first-aid steps, checked against the NIOSH page).
+- **A guessed gender.** Kai sees only pseudonymous refs (M1, M2…), never names, so when its plan called a member with a heart condition "she" (1 Oct), it was guessing. Kai is now told it knows no one's gender; an answer that uses "he" or "she" is sent back once, and any line that still does gets the neutral template.
 - **A limit we did not set.** Thirteen plan requests at once got three HTTP 503s: this new AWS account could run only 10 Lambda functions at once (the usual default is 1,000). The account's quota was raised to 1,000 the same day (confirmed with `GetAccountSettings`), and the page also retries a refused read.
 
 ## Cost
@@ -217,11 +234,12 @@ The development process is logged with real command output in [docs/BUILD_LOG.md
 3. **Proved the heat-index code against an independent implementation** (MetPy), and found by reading MetPy's source that its low-temperature shortcut differs from the NWS text.
 4. **Tested in a real browser, against production.** Headless Chrome drives the whole flow, from checking risk to deleting a group ([scripts/e2e/](scripts/e2e/)), plus every Agent HQ button, and fails on any console error, broken step or horizontal overflow.
 5. **Deployed, measured, and fixed in loops.** Every agent change was deployed, run live, read back from DynamoDB and CloudWatch, and checked against the forecast before it was called done, including a fact-check of each new agent's first real output.
+6. **Made the demo video the same way.** Claude Code fact-checked every narration sentence against the code, and on the way found a dashboard wording bug and a README example that no longer matched the live site; both were fixed. It voiced the narration with Amazon Polly through the AWS MCP Server, and wrote a recorder that drives Chrome on the live site, cueing each click to the word it illustrates. When the site was slower than the voice, the voice pauses rather than the wait being cut ([docs/DEMO_SCRIPT.md](docs/DEMO_SCRIPT.md)).
 
 ## Run it yourself
 
 ```bash
-npm test                        # 153 unit and regression tests, no AWS needed
+npm test                        # 155 unit and regression tests, no AWS needed
 npm run dev                     # http://localhost:8787 — real weather, in-memory data, Bedrock stubbed
 HEATSHIELD_PROXY=https://<site> PORT=8788 node scripts/dev-server.mjs   # local UI against the live agents
 npm run deploy                  # test -> lint -> sam build/deploy -> upload site -> smoke test -> Otto post-deploy check
@@ -257,7 +275,7 @@ aws lambda invoke --function-name <AlertCheckFunctionName> \
 ## Repository map
 
 ```
-frontend/                  static site (no framework): index, join, group (leader dashboard), me (personal page),
+frontend/                  static site (no framework): index, join, group (leader dashboard), me (personal page), demo (the video),
                            agents.html + js/pixel-office.js, js/office-live.js, js/agents-page.js (Agent HQ),
                            admin.html + js/admin.js (operator console)
 infra/template.yaml        the whole AWS stack (SAM)
@@ -270,7 +288,8 @@ infra/functions/lib/agents/        sentinel (Sol), auditor (Quinn), language-rev
 infra/functions/lib/algorithms/    ehf.mjs, ensemble.mjs, verification.mjs, bm25.mjs, langid.mjs, stats.mjs (OLS, EWMA)
 infra/tests/               node --test suite, including regressions.test.mjs and learning.test.mjs (one test per live incident)
 scripts/                   deploy, eval-guidance, seed-demo, local dev server; e2e/ (headless-Chrome tests of the live site)
-docs/                      BUILD_LOG.md (development process + AWS connection proof), architecture.svg, screenshots
+docs/                      BUILD_LOG.md (development process + AWS connection proof), DEMO_SCRIPT.md (the video, and how
+                           it was made), SUBMISSION.md, architecture.svg, screenshots
 .claude/skills/            the playbooks Claude Code followed for each part of the build
 ```
 

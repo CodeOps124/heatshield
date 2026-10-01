@@ -1,0 +1,103 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>HeatShield demo video</title>
+  <meta name="description" content="A demo of HeatShield (4:44), recorded on the live site: a personal heat check in Arabic and Hindi, a real alert email, the community dashboard, eight AI agents at work, Ask the team, and the AWS architecture.">
+  <link rel="icon" href="/favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="/css/styles.css">
+  <script src="/js/theme.js"></script>
+  <script type="module" src="/js/demo.js"></script>
+</head>
+<body>
+  <a class="skip-link" href="#main">Skip to content</a>
+  <header class="site-header">
+    <div class="wrap">
+      <a class="brand" href="/" aria-label="HeatShield home">
+        <svg viewBox="0 0 32 32" aria-hidden="true"><path d="M16 2.5l11 4v8.3c0 6.6-4.6 11.5-11 13.2C9.6 26.3 5 21.4 5 14.8V6.5z" fill="#eb6834"/><path d="M16 9v8.2" stroke="#fff" stroke-width="2.6" stroke-linecap="round"/><circle cx="16" cy="21" r="2.4" fill="#fff"/></svg>
+        HeatShield
+      </a>
+      <nav class="nav" aria-label="Main">
+        <a href="/#check">Check risk</a>
+        <a href="/agents.html">Agent HQ</a>
+        <button class="theme-toggle" id="theme-toggle" type="button" aria-label="Toggle theme"></button>
+      </nav>
+    </div>
+  </header>
+
+  <main id="main" class="wrap section">
+    <p class="eyebrow">Demo · 4:44 · captions</p>
+    <h1>HeatShield, from forecast to action</h1>
+    <p class="lede">Every screen in this video was recorded on the live site while it ran. Nothing is mocked: the forecast, the plans, the agents' answers and the alert email are real.</p>
+
+    <div class="demo-frame mt-16">
+      <video id="demo-video" class="demo-video" controls preload="metadata" playsinline poster="/media/heatshield-demo-poster.jpg">
+        <source src="/media/heatshield-demo.mp4" type="video/mp4">
+        <track kind="captions" src="/media/heatshield-demo.vtt" srclang="en" label="English" default>
+        Your browser cannot play this video. <a href="/media/heatshield-demo.mp4">Download it (MP4)</a>.
+      </video>
+    </div>
+
+    <div class="grid-2 mt-16">
+      <section class="card" aria-labelledby="chapters-title">
+        <h2 id="chapters-title">Chapters</h2>
+        <ol class="chapters" id="chapters">
+          <!-- CHAPTERS -->
+          <li><button type="button" data-t="0"><time>0:00</time><span>The problem: heat, in numbers</span></button></li>
+          <li><button type="button" data-t="29.8"><time>0:29</time><span>A personal check: Dubai, in Arabic, read aloud, then Hindi</span></button></li>
+          <li><button type="button" data-t="87"><time>1:27</time><span>A real alert email, sent by the schedule</span></button></li>
+          <li><button type="button" data-t="111.8"><time>1:51</time><span>The community dashboard and Kai’s check-in plan</span></button></li>
+          <li><button type="button" data-t="138.7"><time>2:18</time><span>Agent HQ: eight agents at work</span></button></li>
+          <li><button type="button" data-t="171.5"><time>2:51</time><span>Ask the team, and how code checks the answers</span></button></li>
+          <li><button type="button" data-t="227.1"><time>3:47</time><span>The architecture on AWS</span></button></li>
+          <li><button type="button" data-t="260.9"><time>4:20</time><span>Built with Claude Code</span></button></li>
+          <!-- /CHAPTERS -->
+        </ol>
+      </section>
+      <section class="card" aria-labelledby="try-title">
+        <h2 id="try-title">Try it yourself</h2>
+        <ul class="plain-list">
+          <li><a href="/">Check the heat risk anywhere</a>, in 13 languages</li>
+          <li><a href="/agents.html#ask">Ask the team</a> a question, and watch the agents work</li>
+          <li><a href="/group.html#g=5NpOU_pMXAK_&amp;k=Q51QdY6DIZK7P4pLCF9B8KAiofrIcFgj">The community dashboard</a> (read-only demo group)</li>
+          <li><a href="/media/heatshield-demo.mp4" download>Download the video</a> (MP4, 1080p) · <a href="/media/heatshield-demo.vtt" download>captions</a></li>
+        </ul>
+        <p class="hint mt-16">Voice-over and the Arabic plan read aloud: Amazon Polly. Built with Claude Code, connected to AWS through the AWS MCP Server.</p>
+      </section>
+    </div>
+
+    <section class="card mt-16" aria-labelledby="transcript-title">
+      <h2 id="transcript-title">Transcript</h2>
+      <div class="transcript" id="transcript">
+        <!-- TRANSCRIPT -->
+        <h3>0:00 · The problem: heat, in numbers</h3>
+        <p>Heat is linked to an estimated four hundred and eighty-nine thousand deaths a year, and two point four billion of the world's workers are likely to be exposed to excessive heat on the job. The people most at risk are the least likely to get a warning they can act on. A weather app tells you it's forty-one degrees. HeatShield tells you what to do about it: for your body, your job, and in your own language.</p>
+        <h3>0:29 · A personal check: Dubai, in Arabic, read aloud, then Hindi</h3>
+        <p>Here's an outdoor worker in Dubai. HeatShield takes the live forecast and computes the heat index used by the US National Weather Service: the risk right now, when it peaks, and this person's risky hours. Hour by hour, the chart shows where the heat is heading. Then Amazon Bedrock writes a short action plan in Arabic: three concrete steps and the warning signs, grounded in CDC and NIOSH guidance. Two reviewer agents check its language and its safety before anyone sees it. For anyone who finds reading hard, Amazon Polly reads it aloud. Switch the language, and a coworker gets their own plan in Hindi. HeatShield writes plans in thirteen languages.</p>
+        <h3>1:27 · A real alert email, sent by the schedule</h3>
+        <p>Nobody has to remember to check. Every hour, EventBridge Scheduler re-scores everyone, and Amazon SNS emails anyone whose risk reaches their personal alert level: at most once per level each day, and never at night. This is a real inbox. The six a.m. alert was sent by the schedule on its own, before the heat of the day.</p>
+        <h3>1:51 · The community dashboard and Kai’s check-in plan</h3>
+        <p>HeatShield is built for communities. A foreman, a teacher or a clinic worker shares one invite link and watches the whole group on a private dashboard, worst risk first. Kai, the coordinator agent, plans who to check on first and by when, across time zones, and for outdoor workers, the safest eight-hour shift, computed from the forecast.</p>
+        <h3>2:18 · Agent HQ: eight agents at work</h3>
+        <p>Behind it are eight AI agents, and you can watch them work in Agent HQ, drawn live from their real runs. Each one pairs a real algorithm with a model. Sol detects heatwaves against each city's own climate, and reads fifty-one ensemble forecasts, so a warning says how likely it is. Quinn audits the forecast every day: every missed Danger day and every false alarm is counted by code, not by the model.</p>
+        <h3>2:51 · Ask the team, and how code checks the answers</h3>
+        <p>And anyone can ask the team a question, in any of the thirteen languages. Kai assigns it to the right agents, who answer with their real tools. Here, Sol finds Karachi, and Kai searches the forecast for the crew's safest shift. Now a harder one: a coworker showing signs of heat stroke. Nothing a model writes is trusted on its own. Code makes the final call: every number in an answer must come from a tool, a health answer that skips the vetted facts is sent back, and phone numbers, medicines and doses are blocked. So the answer starts with calling the local emergency number, followed by the vetted first-aid steps. Even the model was chosen by measurement: five Bedrock models answered the same questions, and the most accurate one now coordinates the team.</p>
+        <h3>3:47 · The architecture on AWS</h3>
+        <p>It's fully serverless on AWS, in one SAM template: CloudFront and S3, API Gateway and nine Lambda functions, DynamoDB, EventBridge Scheduler, SNS, Polly, Cognito for the operator console, and Amazon Bedrock behind every agent. Failed runs are retried and kept, nine CloudWatch alarms email the operator, and a measured daily AI budget caps the spending without ever stopping the alerts.</p>
+        <h3>4:20 · Built with Claude Code</h3>
+        <p>HeatShield was built with Claude Code, connected to AWS through the AWS MCP Server, and every step is in the build log. Even this voice is Amazon Polly. It's live right now. HeatShield: from forecast to action, in your language.</p>
+        <!-- /TRANSCRIPT -->
+      </div>
+    </section>
+  </main>
+
+  <footer class="site-footer">
+    <div class="wrap">
+      <p><strong>HeatShield gives safety information, not medical care.</strong> If someone is confused, faints or has very hot skin, call your local emergency number.</p>
+      <p>Built for the AWS Student Builder Group “Zero to Shipped” hackathon · Social Good · Community.</p>
+      <p class="version" id="version"></p>
+    </div>
+  </footer>
+</body>
+</html>

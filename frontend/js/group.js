@@ -20,6 +20,15 @@ function ago(iso) {
 }
 
 /** Kai's check-in plan: who to contact first. Order and deadlines come from code; wording from the model. */
+// Both numbers for both shifts: "0 h in Danger" alone could read as "safe" when all 8 hours are Extreme Caution.
+function shiftLine({ length, day, best, standard }) {
+  const hours = (w) => `${w.dangerHours} h in Danger, ${w.extremeCautionHours} h in Extreme Caution`;
+  const head = `Safest ${length}-hour shift on ${day}: ${best.start}-${best.end} (${hours(best)})`;
+  if (!standard) return `${head}.`;
+  if (standard.start === best.start) return `${head}; no other shift starting 04:00-10:00 is safer.`;
+  return `${head}; a ${standard.start}-${standard.end} shift would have ${hours(standard).replace(', ', ' and ')}.`;
+}
+
 function renderPlan(plan) {
   const card = clear($('plan-card'));
   card.hidden = false;
@@ -51,8 +60,7 @@ function renderPlan(plan) {
       el('div', { class: 'member-name' }, `${c.name}: check in ${c.checkInBy === 'now' ? 'now' : `before ${c.checkInBy}`}`),
       el('div', { class: 'member-sub' }, `${TIER_LABELS[c.tier] ?? c.tier} in the next 12 hours · risky ${c.riskyHours ?? 'hours not known'}`),
       el('p', { class: 'checkin-action' }, c.action),
-      // Both numbers for both shifts: "0 h in Danger" alone could read as "safe" when all 8 hours are Extreme Caution.
-      c.shift?.best ? el('p', { class: 'member-sub' }, `Safest ${c.shift.length}-hour shift on ${c.shift.day}: ${c.shift.best.start}-${c.shift.best.end} (${c.shift.best.dangerHours} h in Danger, ${c.shift.best.extremeCautionHours} h in Extreme Caution)${c.shift.standard ? `; a ${c.shift.standard.start}-${c.shift.standard.end} shift would have ${c.shift.standard.dangerHours} h in Danger and ${c.shift.standard.extremeCautionHours} h in Extreme Caution` : ''}.`) : null,
+      c.shift?.best ? el('p', { class: 'member-sub' }, shiftLine(c.shift)) : null,
       c.reason ? el('p', { class: 'member-sub' }, c.reason) : null))),
     plan.teamNote ? el('div', { class: 'callout info mt-16' }, el('p', {}, plan.teamNote)) : null,
   );

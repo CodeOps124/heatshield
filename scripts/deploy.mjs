@@ -87,7 +87,8 @@ if (outputs.AdminClientId) {
 
 const bucket = `s3://${outputs.SiteBucketName}`;
 // Short cache lifetimes (no hashed filenames) + a CloudFront invalidation on every deploy.
-run('aws', ['s3', 'sync', 'frontend', bucket, '--delete', '--exclude', 'audio/*', '--exclude', '*.html', '--exclude', '*.json', '--cache-control', 'public, max-age=300', ...awsArgs]);
+// audio/ (Polly output) and media/ (the demo video, too big for git) live only in the bucket: never deleted here.
+run('aws', ['s3', 'sync', 'frontend', bucket, '--delete', '--exclude', 'audio/*', '--exclude', 'media/*', '--exclude', '*.html', '--exclude', '*.json', '--cache-control', 'public, max-age=300', ...awsArgs]);
 run('aws', ['s3', 'sync', 'frontend', bucket, '--exclude', '*', '--include', '*.html', '--include', '*.json', '--cache-control', 'public, max-age=60', ...awsArgs]);
 run('aws', ['cloudfront', 'create-invalidation', '--distribution-id', outputs.DistributionId, '--paths', '/*', '--query', 'Invalidation.{Id:Id,Status:Status}', '--output', 'json', ...awsArgs]);
 

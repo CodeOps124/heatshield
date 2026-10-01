@@ -488,3 +488,14 @@ textarea { resize: vertical; min-height: 88px; }
 .ask-example:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
 
 .ask-plan { margin: 10px 0; padding: 12px 14px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface); }
+
+/* ---------------------------------------------------------------- demo page */
+.demo-frame { border-radius: var(--radius); overflow: hidden; box-shadow: var(--shadow); background: #000; }
+.demo-video { display: block; width: 100%; height: auto; aspect-ratio: 16 / 9; background: #000; }
+.chapters { list-style: none; padding: 0; margin: 8px 0 0; display: grid; gap: 4px; }
+.chapters button { font: inherit; width: 100%; display: flex; gap: 12px; align-items: baseline; text-align: start; padding: 8px 10px; border: 1px solid transparent; border-radius: var(--radius-sm); background: transparent; color: var(--ink); cursor: pointer; }
+.chapters button:hover { background: var(--surface-2); }
+.chapters button:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+.chapters time { font-variant-numeric: tabular-nums; color: var(--ink-2); min-width: 3.2em; }
+.transcript h3 { font-size: 1rem; margin: 18px 0 4px; }
+.transcript p { margin: 0; color: var(--ink-2); line-height: 1.6; }
