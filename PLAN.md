@@ -19,14 +19,14 @@ Live: https://d3tda9dyutl7ux.cloudfront.net — details and real command output 
 | 11 · Listen (Amazon Polly) | Done: approved plans read aloud in 7 of 13 languages (no Polly voice for the other 6), content-hashed audio in S3, metered in the AI budget. |
 | 12 · Ask the team | Done: a prompt box on Agent HQ; Kai (Kimi K2.5, chosen by measuring five models; Nova Pro fallback) assigns questions to the agents' read-only tools; code checks every number, health statement, link and the emergency sentence; about US$0.003 a question. |
 
-Read `CLAUDE.md` first. This is the order of operations, sized for a hackathon timeline
+This is the order of operations, sized for a hackathon timeline
 (assume 3–5 focused working sessions before the deadline; adjust dates once you know the
 actual submission deadline and put it at the top of this file).
 
 ## Phase 0 — Setup & proof of connection (do this first, it's a hard requirement)
 1. Create/confirm AWS account, set up IAM Identity Center or an IAM user scoped to what we need
    (avoid root credentials for anything).
-2. Connect Claude Code to AWS using the AWS MCP Server (`.claude/skills/aws-connect-proof/SKILL.md`).
+2. Connect the coding agent to AWS using the AWS MCP Server.
 3. Capture proof immediately: `aws sts get-caller-identity` output, `/mcp` connection status,
    first few tool calls — paste into `docs/BUILD_LOG.md`. Do not wait until the end to do this.
 4. Pick IaC tool (SAM recommended for speed) and commit an empty `template.yaml` + `sam --version`
@@ -38,16 +38,15 @@ before any real feature work. This de-risks the ship gate — if something break
 have a live URL.
 1. S3 bucket (static site) + CloudFront distribution.
 2. API Gateway HTTP API + one Lambda ("healthcheck") returning JSON.
-3. Deploy via SAM. Record the CloudFront URL in `CLAUDE.md` under "What done looks like" and in
-   `docs/BUILD_LOG.md`.
+3. Deploy via SAM. Record the CloudFront URL in `docs/BUILD_LOG.md`.
 4. Confirm the URL loads from a phone/incognito window, not just the dev machine.
 
 ## Phase 2 — Data model & weather ingestion
 1. DynamoDB tables: `Locations` (PK: locationId; fields: lat, lon, label, riskProfile, language,
    phone/email, groupOwnerId), `Alerts` (PK: alertId; fields: locationId, sentAt, riskScore, channel).
 2. Lambda: given lat/lon, call Open-Meteo (or NWS for US coords), return current + forecast temp,
-   humidity, and a computed heat-index risk score (see `.claude/skills/heat-risk-engine/SKILL.md`
-   for the exact formula and thresholds — don't reinvent the heat-index math, use the skill).
+   humidity, and a computed heat-index risk score (the NWS formula and thresholds; don't reinvent the
+   heat-index math).
 3. Wire this Lambda behind an API route (`GET /risk?locationId=...`) and test against 2–3 real
    world coordinates spanning different climates (e.g., Phoenix, Lagos, Dubai) to sanity-check
    the risk tiers feel right.
@@ -64,8 +63,7 @@ have a live URL.
 
 ## Phase 4 — AI localization/guidance layer (the innovation centerpiece)
 1. Lambda calls Amazon Bedrock with the structured risk data + risk profile + target language,
-   using a tight prompt template (see `.claude/skills/bedrock-multilingual-guidance/SKILL.md`)
-   to produce a short, specific, plain-language action paragraph — not a generic "stay hydrated."
+   using a tight prompt template to produce a short, specific, plain-language action paragraph — not a generic "stay hydrated."
 2. Cache the generated text per (locationId, risk tier, language) for a few hours in DynamoDB to
    avoid regenerating identical guidance on every page load (cost + latency control).
 3. Test in at least two languages end to end (e.g., English + Arabic, or English + Spanish) —
@@ -85,9 +83,8 @@ have a live URL.
 2. Architecture diagram (can be a simple draw.io/excalidraw export or ASCII — clarity over polish).
 3. 2–3 minute demo video: registration → risk score → localized action text in two languages →
    a triggered alert. Screen record, don't overproduce.
-4. Run the full checklist in `.claude/skills/ship-gate-check/SKILL.md` — literally go through it
-   line by line before touching Builder Center.
-5. Use `.claude/skills/submission-storytelling/SKILL.md` to draft the Builder Center submission
+4. Run the full ship-gate checklist line by line before touching Builder Center.
+5. Draft the Builder Center submission
    text against the actual judging criteria (creativity, technical innovation, impact, communication).
 6. Tag `#social-good` + `#community` (or `#startups` — pick one, see lane-flexibility note below)
    in Builder Center before the deadline.

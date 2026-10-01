@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>HeatShield demo video</title>
-  <meta name="description" content="A demo of HeatShield (4:44), recorded on the live site: a personal heat check in Arabic and Hindi, a real alert email, the community dashboard, eight AI agents at work, Ask the team, and the AWS architecture.">
+  <meta name="description" content="A demo of HeatShield (4:34), recorded on the live site: a personal heat check in Arabic and Hindi, a real alert email, the community dashboard, eight AI agents at work, Ask the team, and the AWS architecture.">
   <link rel="icon" href="/favicon.svg" type="image/svg+xml">
   <link rel="stylesheet" href="/css/styles.css">
   <script src="/js/theme.js"></script>
@@ -27,7 +27,7 @@
   </header>
 
   <main id="main" class="wrap section">
-    <p class="eyebrow">Demo · 4:44 · captions</p>
+    <p class="eyebrow">Demo · 4:34 · captions</p>
     <h1>HeatShield, from forecast to action</h1>
     <p class="lede">Every screen in this video was recorded on the live site while it ran. Nothing is mocked: the forecast, the plans, the agents' answers and the alert email are real.</p>
 
@@ -51,7 +51,7 @@
           <li><button type="button" data-t="138.7"><time>2:18</time><span>Agent HQ: eight agents at work</span></button></li>
           <li><button type="button" data-t="171.5"><time>2:51</time><span>Ask the team, and how code checks the answers</span></button></li>
           <li><button type="button" data-t="227.1"><time>3:47</time><span>The architecture on AWS</span></button></li>
-          <li><button type="button" data-t="260.9"><time>4:20</time><span>Built with Claude Code</span></button></li>
+          <li><button type="button" data-t="260.9"><time>4:20</time><span>Live now, and where to try it</span></button></li>
           <!-- /CHAPTERS -->
         </ol>
       </section>
@@ -63,7 +63,7 @@
           <li><a href="/group.html#g=5NpOU_pMXAK_&amp;k=Q51QdY6DIZK7P4pLCF9B8KAiofrIcFgj">The community dashboard</a> (read-only demo group)</li>
           <li><a href="/media/heatshield-demo.mp4" download>Download the video</a> (MP4, 1080p) · <a href="/media/heatshield-demo.vtt" download>captions</a></li>
         </ul>
-        <p class="hint mt-16">Voice-over and the Arabic plan read aloud: Amazon Polly. Built with Claude Code, connected to AWS through the AWS MCP Server.</p>
+        <p class="hint mt-16">Voice-over and the Arabic plan read aloud: Amazon Polly.</p>
       </section>
     </div>
 
@@ -85,8 +85,8 @@
         <p>And anyone can ask the team a question, in any of the thirteen languages. Kai assigns it to the right agents, who answer with their real tools. Here, Sol finds Karachi, and Kai searches the forecast for the crew's safest shift. Now a harder one: a coworker showing signs of heat stroke. Nothing a model writes is trusted on its own. Code makes the final call: every number in an answer must come from a tool, a health answer that skips the vetted facts is sent back, and phone numbers, medicines and doses are blocked. So the answer starts with calling the local emergency number, followed by the vetted first-aid steps. Even the model was chosen by measurement: five Bedrock models answered the same questions, and the most accurate one now coordinates the team.</p>
         <h3>3:47 · The architecture on AWS</h3>
         <p>It's fully serverless on AWS, in one SAM template: CloudFront and S3, API Gateway and nine Lambda functions, DynamoDB, EventBridge Scheduler, SNS, Polly, Cognito for the operator console, and Amazon Bedrock behind every agent. Failed runs are retried and kept, nine CloudWatch alarms email the operator, and a measured daily AI budget caps the spending without ever stopping the alerts.</p>
-        <h3>4:20 · Built with Claude Code</h3>
-        <p>HeatShield was built with Claude Code, connected to AWS through the AWS MCP Server, and every step is in the build log. Even this voice is Amazon Polly. It's live right now. HeatShield: from forecast to action, in your language.</p>
+        <h3>4:20 · Live now, and where to try it</h3>
+        <p>Even this voice is Amazon Polly. It's live right now. HeatShield: from forecast to action, in your language.</p>
         <!-- /TRANSCRIPT -->
       </div>
     </section>

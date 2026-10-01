@@ -8,8 +8,8 @@
 |---|---|
 | **Live app** | https://d3tda9dyutl7ux.cloudfront.net |
 | **Agent HQ**: the eight agents, live, and Ask the team | https://d3tda9dyutl7ux.cloudfront.net/agents.html |
-| **Demo video** (4:44, captions, chapters, transcript) | https://d3tda9dyutl7ux.cloudfront.net/demo.html |
-| **How Claude Code built it**, with the AWS MCP Server connection proof | [docs/BUILD_LOG.md](docs/BUILD_LOG.md) |
+| **Demo video** (4:34, captions, chapters, transcript) | https://d3tda9dyutl7ux.cloudfront.net/demo.html |
+| **How it was built**, with proof of the coding agent's AWS MCP Server connection | [docs/BUILD_LOG.md](docs/BUILD_LOG.md) |
 
 Built for the AWS Student Builder Group **Zero to Shipped** hackathon · `#social-good` (Climate resilience) · `#community`
 
@@ -226,16 +226,16 @@ Measured from the agent log, with prices from the AWS Price List API (Nova 2 Lit
 - IAM: one managed policy allows `bedrock:InvokeModel` on exactly the inference profiles HeatShield uses; Otto can read only this stack's log groups and invoke only this stack's functions; the public API can write only under `audio/` in the site bucket.
 - The public demo group is read-only, so the demo dashboard link can be shared without being vandalized.
 
-## How Claude Code built this
+## How it was built
 
-The development process is logged with real command output in [docs/BUILD_LOG.md](docs/BUILD_LOG.md). Highlights:
+I built HeatShield with a coding agent connected to AWS through the AWS MCP Server. The development process is logged with real command output in [docs/BUILD_LOG.md](docs/BUILD_LOG.md). Highlights:
 
 1. **Connected to AWS through the official AWS Agent Toolkit:** browser `aws login`, then the AWS MCP Server. The Bedrock model IDs came from a real `ListInferenceProfiles` call made through the MCP server; Polly's voices from a real `DescribeVoices` call, each tested with a sentence in its language before any code used it. The agents' live behaviour was investigated through the MCP server too (DynamoDB agent-log queries, CloudWatch Logs searches, Lambda invocations).
 2. **Checked facts before coding them:** NWS formula, the Excess Heat Factor paper, CDC/NIOSH guidance, WHO/ILO statistics, model and service prices, Open-Meteo response shapes and AWS API behaviour were all taken from primary sources first.
 3. **Proved the heat-index code against an independent implementation** (MetPy), and found by reading MetPy's source that its low-temperature shortcut differs from the NWS text.
 4. **Tested in a real browser, against production.** Headless Chrome drives the whole flow, from checking risk to deleting a group ([scripts/e2e/](scripts/e2e/)), plus every Agent HQ button, and fails on any console error, broken step or horizontal overflow.
 5. **Deployed, measured, and fixed in loops.** Every agent change was deployed, run live, read back from DynamoDB and CloudWatch, and checked against the forecast before it was called done, including a fact-check of each new agent's first real output.
-6. **Made the demo video the same way.** Claude Code fact-checked every narration sentence against the code, and on the way found a dashboard wording bug and a README example that no longer matched the live site; both were fixed. It voiced the narration with Amazon Polly through the AWS MCP Server, and wrote a recorder that drives Chrome on the live site, cueing each click to the word it illustrates. When the site was slower than the voice, the voice pauses rather than the wait being cut ([docs/DEMO_SCRIPT.md](docs/DEMO_SCRIPT.md)).
+6. **Made the demo video the same way.** Every narration sentence was fact-checked against the code, and on the way a dashboard wording bug and a README example that no longer matched the live site were found and fixed. The narration was voiced with Amazon Polly through the AWS MCP Server, and a recorder drives Chrome on the live site, cueing each click to the word it illustrates. When the site was slower than the voice, the voice pauses rather than the wait being cut ([docs/DEMO_SCRIPT.md](docs/DEMO_SCRIPT.md)).
 
 ## Run it yourself
 
@@ -291,7 +291,6 @@ infra/tests/               node --test suite, including regressions.test.mjs and
 scripts/                   deploy, eval-guidance, seed-demo, local dev server; e2e/ (headless-Chrome tests of the live site)
 docs/                      BUILD_LOG.md (development process + AWS connection proof), DEMO_SCRIPT.md (the video, and how
                            it was made), SUBMISSION.md, architecture.svg, screenshots
-.claude/skills/            the playbooks Claude Code followed for each part of the build
 ```
 
 ## License

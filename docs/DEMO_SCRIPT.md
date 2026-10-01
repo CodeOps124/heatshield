@@ -1,6 +1,6 @@
 # Demo video
 
-**Watch:** https://d3tda9dyutl7ux.cloudfront.net/demo.html (4:44, 1080p, English captions; the MP4 and captions can be downloaded from that page).
+**Watch:** https://d3tda9dyutl7ux.cloudfront.net/demo.html (4:34, 1080p, English captions; the MP4 and captions can be downloaded from that page).
 
 Every screen was recorded on the live site while it ran: the forecast, the plans, the agents' answers and the alert email are real, nothing is mocked or staged. Numbers on screen are whatever the live forecast said at recording time (1 Oct 2026), so the site shows different values today.
 
@@ -13,11 +13,11 @@ Every screen was recorded on the live site while it ran: the forecast, the plans
 | 2:18 | Agent HQ: the office drawn from the real agent log; Sol’s panel (algorithm, ensemble chance); Quinn’s 14-day forecast track record. | Behind it are eight AI agents, and you can watch them work in Agent HQ, drawn live from their real runs. Each one pairs a real algorithm with a model. Sol detects heatwaves against each city's own climate, and reads fifty-one ensemble forecasts, so a warning says how likely it is. Quinn audits the forecast every day: every missed Danger day and every false alarm is counted by code, not by the model. |
 | 2:51 | Ask the team, live: a Karachi crew question (Kai asks Sol; the trace opens), then the heat-stroke example while the narration explains the code checks; the answer starts with the emergency sentence; its trace (Kai asked Vera for the vetted facts). | And anyone can ask the team a question, in any of the thirteen languages. Kai assigns it to the right agents, who answer with their real tools. Here, Sol finds Karachi, and Kai searches the forecast for the crew's safest shift. Now a harder one: a coworker showing signs of heat stroke. Nothing a model writes is trusted on its own. Code makes the final call: every number in an answer must come from a tool, a health answer that skips the vetted facts is sent back, and phone numbers, medicines and doses are blocked. So the answer starts with calling the local emergency number, followed by the vetted first-aid steps. Even the model was chosen by measurement: five Bedrock models answered the same questions, and the most accurate one now coordinates the team. |
 | 3:47 | The architecture diagram; the camera follows the services as they are named. | It's fully serverless on AWS, in one SAM template: CloudFront and S3, API Gateway and nine Lambda functions, DynamoDB, EventBridge Scheduler, SNS, Polly, Cognito for the operator console, and Amazon Bedrock behind every agent. Failed runs are retried and kept, nine CloudWatch alarms email the operator, and a measured daily AI budget caps the spending without ever stopping the alerts. |
-| 4:20 | Closing card: live URL, repository, credits. | HeatShield was built with Claude Code, connected to AWS through the AWS MCP Server, and every step is in the build log. Even this voice is Amazon Polly. It's live right now. HeatShield: from forecast to action, in your language. |
+| 4:20 | Closing card: live URL, repository, credits. | Even this voice is Amazon Polly. It's live right now. HeatShield: from forecast to action, in your language. |
 
 ## How it was made
 
-Claude Code wrote and ran the whole pipeline (the scripts stay outside the repository; they are tooling, not product):
+The production pipeline (its scripts stay outside the repository; they are tooling, not product):
 
 1. **Narration first.** Every sentence was checked against the code and live data before it was voiced (for example, "never at night" is the 21:00–05:59 quiet window in `alert-runner.mjs`, and "the safest eight-hour shift" says no day because Kai searches the next 36 hours). The voice-over is Amazon Polly (the long-form engine, voice Ruth), synthesized with speech marks: the time of every word.
 2. **Screens cued to words.** A Playwright script drives Chrome on the live site at 1920×1080 (Chrome screencast frames, a visible cursor). Each click waits for the word it illustrates. When the live site was slower than the narration, the script recorded the delay and the voice pauses there; waits are never cut out of the video.

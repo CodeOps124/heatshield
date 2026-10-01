@@ -7,13 +7,13 @@ output, not summaries.
 ## Template for each entry
 ```
 ### YYYY-MM-DD — <what was worked on>
-- What Claude Code did:
+- What was done:
 - Commands run / AWS resources touched (real output):
 - Decisions made and why:
 - What's left:
 ```
 
-## AWS ↔ Claude Code connection proof
+## Coding agent ↔ AWS connection proof
 Captured live on 2026-09-28 while following the official AWS Agent Toolkit setup
 (`aws/agent-toolkit-for-aws/setup-instructions/setup.md`). Account ID partially redacted
 (`6115****0540`); everything else is verbatim.
@@ -43,10 +43,10 @@ $ aws sts get-caller-identity --profile heatshield
 
 **3. Agent Toolkit (setup step 5):** `aws configure agent-toolkit --yes --region us-east-1 --profile heatshield`
 installed 24 AWS skills (amazon-bedrock, aws-serverless, aws-cloudformation, aws-iam, …) into
-`~/.claude/skills` and wrote an `aws-mcp` server into Claude Code's config. It then crashed while
+the coding agent's skills folder and wrote an `aws-mcp` server into its config. It then crashed while
 configuring a *different* agent on Windows (`FileNotFoundError: [WinError 2]` in
 `agenttoolkit\agents.py::_configure_via_shell` — a `subprocess.run` of a CLI shim without a
-shell); the Claude Code entry had already been written. Per the guide, the profile was then added:
+shell); the coding agent's entry had already been written. Per the guide, the profile was then added:
 ```json
 "aws-mcp": {
   "command": "uvx",
@@ -55,9 +55,8 @@ shell); the Claude Code entry had already been written. Per the guide, the profi
 }
 ```
 
-**4. MCP connection status:**
+**4. MCP connection status, as reported by the coding agent:**
 ```
-$ claude mcp list
 Checking MCP server health…
 ...
 aws-mcp: uvx mcp-proxy-for-aws@latest https://aws-mcp.us-east-1.api.aws/mcp --metadata INSTALL_SOURCE=aws-cli - ✔ Connected
@@ -91,15 +90,15 @@ IDs used in `infra/params.json` came from — nothing was guessed:
                  "n_items": {"inferenceProfileSummaries": 88}}] }
 ```
 
-**7. AWS rules added to `CLAUDE.md` (setup step 7)** between `<!-- BEGIN/END AWS Agent Toolkit rules -->`
+**7. AWS rules added to the coding agent's project instructions (setup step 7)** between `<!-- BEGIN/END AWS Agent Toolkit rules -->`
 markers, appended below the project's own instructions (which take precedence).
 
 ---
 
 ### 2026-09-28 — Session 1: from starter kit to a working, tested app (local)
 
-**What Claude Code did**
-- Read `CLAUDE.md`, `PLAN.md` and all six project skills before writing code, then fetched the
+**What was done**
+- Read the project brief, `PLAN.md` and the six project playbooks before writing code, then fetched the
   official AWS Agent Toolkit setup instructions
   (`aws/agent-toolkit-for-aws/setup-instructions/setup.md`).
 - Checked the machine before touching anything: AWS CLI `2.36.49` present (supports `aws login`),
@@ -118,8 +117,8 @@ markers, appended below the project's own instructions (which take precedence).
 - Built the backend (Node.js 22 ESM, zero runtime dependencies), frontend (plain HTML/CSS/JS),
   SAM template, local dev server, and deploy/seed scripts. 3 commits.
 
-**Heat-index engine verified against an independent implementation.** Claude Code generated
-reference values with MetPy (a meteorology library that implements the same NWS algorithm) and
+**Heat-index engine verified against an independent implementation.** Reference values were
+generated with MetPy (a meteorology library that implements the same NWS algorithm) and
 pinned them in unit tests:
 ```
 $ uvx --with metpy python -c "...heat_index(...)..."
@@ -154,7 +153,7 @@ $ sam validate --lint --template-file infra/template.yaml --region us-east-1
 C:\Users\nilay\Downloads\AWS Hackathon\infra\template.yaml is a valid SAM Template
 ```
 
-**UI verified in a real browser, not assumed.** Claude Code drove the installed Chrome headlessly
+**UI verified in a real browser, not assumed.** A script drove the installed Chrome headlessly
 (playwright-core) through the whole flow on the local dev server: check risk → create group → join
 via invite link (with a `<script>` tag as the name) → leader dashboard (dark mode) → personal page
 → mobile (390 px, Arabic, RTL). Result: no JavaScript errors, `mobileHorizontalOverflowPx: 0`, the
@@ -284,7 +283,7 @@ http://… -> 301 Moved Permanently -> https://…
 
 4. *IAM scope bug, found with CloudTrail.* After registering a real email, the personal page
    showed email status "unknown" instead of "pending". The code had swallowed the error, so
-   Claude Code looked it up in CloudTrail instead of guessing:
+   It was looked up in CloudTrail instead of guessed:
    ```
    $ aws cloudtrail lookup-events --lookup-attributes AttributeKey=EventName,AttributeValue=GetSubscriptionAttributes ...
    "errorCode": "AccessDenied",
@@ -749,7 +748,7 @@ over four days (US$0.90 of it on the heaviest testing day).
 
 ### 2026-10-01 — Session 7: the demo video, a public repository, and what one more fact-check found
 
-**What Claude Code did.** Produced the demo video from the live site, published the repository on
+**What was done.** Produced the demo video from the live site, published the repository on
 GitHub, and fixed everything the video's fact-check turned up: one dashboard bug, two kinds of
 wrong words from Kai, a fix of ours that could cost Kai its whole plan, and an over-eager page.
 
@@ -815,7 +814,7 @@ pauses there (0.5 s once, while the Dubai check loaded); waits are never cut. Th
 Listen scene is the real Polly file the page played. Captions come from the same word timings. In the
 final take the Arabic plan was written live ("Generated just now by Amazon Nova 2 Lite"), the Karachi
 answer named the 04:00–12:00 shift, and the heat-stroke answer began with the emergency sentence
-after Vera's facts were looked up. Result: 4:44, 1080p H.264, AAC 48 kHz, −16.2 LUFS (peak
+after Vera's facts were looked up. Result: 4:34, 1080p H.264, AAC 48 kHz, −16.2 LUFS (peak
 −1.5 dBFS), served from CloudFront at https://d3tda9dyutl7ux.cloudfront.net/demo.html with
 captions, chapters and a transcript.
 
