@@ -18,6 +18,9 @@
 import { createHash } from 'node:crypto';
 import { runAgent, extractJson } from '../agent-runtime.mjs';
 import { ewmaUpdate, ewmaAnomaly } from '../algorithms/stats.mjs';
+
+// Otto runs every 15 minutes; two slow readings closer than this are "still slow at the next check".
+const SLOW_REPEAT_MS = 25 * 60_000;
 import { measureSpend } from '../spend.mjs';
 import { utcDay } from '../control.mjs';
 
@@ -259,6 +262,21 @@ export async function runWatchdog({ fetchImpl = globalThis.fetch, siteUrl, agent
   }
 
   const fingerprint = createHash('sha1').update(issues.filter((i) => i.severity !== 'info').map((i) => i.code).sort().join('|')).digest('hex').slice(0, 12);
+
+  // One slow reading is noise, not an incident (1 Oct 14:45 UTC: a single 5.7 s Open-Meteo reply paged the
+  // operator and had cleared by the next check). When everything wrong is "slow", it pages only if the
+  // previous check was slow the same way; failures, errors and overdue agents still page at once.
+  const real = issues.filter((i) => i.severity !== 'info');
+  if (real.every((i) => i.code.endsWith('_slow'))) {
+    const seen = await agentLog.getState('otto', 'slow').catch(() => null);
+    const persisted = seen?.fingerprint === fingerprint && nowMs() - Date.parse(seen.at) <= SLOW_REPEAT_MS;
+    await agentLog.putState('otto', 'slow', { fingerprint, at: new Date(nowMs()).toISOString() });
+    if (!persisted) {
+      await agentLog.putState('otto', 'latest', { ...snapshot, incident: null });
+      return { outcome: `${status}-watching`, summary: `Slow: ${real.map((i) => i.code).join(', ')}. Watching; the operator is emailed only if it is still slow at the next check.${healed}`, detail: snapshot };
+    }
+  }
+
   const prev = await agentLog.getState('otto', 'incident');
   const fresh = !prev || prev.fingerprint !== fingerprint || nowMs() - Date.parse(prev.updatedAt) > 6 * 3600_000;
   if (!fresh) {

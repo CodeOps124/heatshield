@@ -115,6 +115,42 @@ test('Otto 06:00 UTC: a slow risk probe is attributed upstream when Open-Meteo i
   assert.equal(down.issues[0].code, 'upstream_failing');
 });
 
+test('Otto 1 Oct 14:45 UTC: one slow Open-Meteo reply paged the operator; a slow reading now pages only if the next check is slow too', async () => {
+  const { db, tables } = createFakeDb();
+  const agentLog = createAgentLog({ db, table: tables.agentLog });
+  let clock = Date.parse('2026-10-01T14:45:00Z');
+  let slow = true;
+  // the weather provider answers in 5.7 s (on Otto's clock) when slow; everything else is instant
+  const fetchImpl = async (url) => {
+    if (url.includes('open-meteo') && slow) clock += 5740;
+    return { status: 200, text: async () => (url.includes('open-meteo') ? '{"current":{"temperature_2m":31}}' : url.includes('health') ? '{"ok":true}' : url.includes('risk') ? '{"risk":{}}' : url.includes('agents') ? '{"agents":[]}' : 'HeatShield') };
+  };
+  const baseline = () => agentLog.putState('otto', 'ewma', { openmeteo: { mean: 1452, variance: 136 ** 2, n: 50 } });
+  const mail = [];
+  const incident = { severity: 'low', title: 'Open-Meteo upstream latency spike', summary: 'Slow upstream.', likelyCause: 'Provider load', evidence: ['5740 ms'], recommendedAction: 'Monitor.' };
+  const deps = { fetchImpl, siteUrl: 'https://x.test', agentLog, logs: { count: async () => 0, sample: async () => [] }, logGroups: { publicApi: 'g' }, models: ['m'], nowMs: () => clock, publish: async (subject) => { mail.push(subject); } };
+  const later = (min) => { clock += min * 60_000; };
+
+  await baseline();
+  const first = await runWatchdog({ ...deps, converse: async () => { throw new Error('one slow reading needs no model call'); } });
+  assert.equal(first.outcome, 'degraded-watching');
+  assert.equal(mail.length, 0, 'not paged for one slow reading');
+  assert.equal((await agentLog.getState('otto', 'latest')).status, 'degraded', 'Agent HQ still shows it');
+
+  later(15); await baseline();
+  const second = await runWatchdog({ ...deps, converse: async () => text(JSON.stringify(incident)) });
+  assert.equal(second.outcome, 'degraded-reported');
+  assert.deepEqual(mail, ['HeatShield degraded: Open-Meteo upstream latency spike']);
+
+  // slow, then healthy, then slow again 30 minutes later: not consecutive, so no new page
+  mail.length = 0;
+  later(15); slow = false; await baseline();
+  assert.equal((await runWatchdog({ ...deps, converse: async () => text('{}') })).outcome, 'healthy');
+  later(15); slow = true; await baseline();
+  assert.equal((await runWatchdog({ ...deps, converse: async () => { throw new Error('not consecutive'); } })).outcome, 'degraded-watching');
+  assert.equal(mail.length, 0);
+});
+
 test('Otto 02:15 UTC: primary-model failures are counted in BOTH functions that generate guidance', async () => {
   const { db, tables } = createFakeDb();
   const agentLog = createAgentLog({ db, table: tables.agentLog });

@@ -746,3 +746,79 @@ the primary writer since day one and every new plan first failed against it befo
 Amazon Nova 2 Lite is now the primary writer with Nova Pro as backup; the Anthropic model is out of
 the chain and out of the IAM policy. Measured AI spend from launch to this change: about US$1.31
 over four days (US$0.90 of it on the heaviest testing day).
+
+### 2026-10-01 — Session 7: the demo video, a public repository, and what one more fact-check found
+
+**What Claude Code did.** Produced the demo video from the live site, published the repository on
+GitHub, and fixed everything the video's fact-check turned up: one dashboard bug, two kinds of
+wrong words from Kai, a fix of ours that could cost Kai its whole plan, and an over-eager page.
+
+**Fact-checking the narration.** Every sentence of the script was checked against the code before
+it was voiced (the hourly `cron(0 * * * ? *)` schedule, the 21:00–05:59 quiet window, one alert per
+level per local day, worst-first dashboard order, Vera's phone, medicine and dose detectors, the
+budget brake that never stops the Dispatcher). Four sentences were reworded because the code did
+not support them as written (for example "the safest shift to work tomorrow": Kai searches the
+next 36 hours, so the shift can be today's). On the way:
+- **The dashboard repeated itself.** When the safest shift *was* the standard shift, the line read
+  "07:00-15:00 … a 07:00-15:00 shift would have 3 h in Danger". It now says no other shift starting
+  04:00-10:00 is safer.
+- **The README's shift example no longer matched the live site** (it described a 04:00 start that a
+  plan made at 07:15 Dubai time could no longer choose). It now uses the Karachi crew's 2 Oct shift
+  (04:00–12:00: no Danger hours, 2 of Extreme Caution; 07:00–15:00: 5 of Extreme Caution), which the
+  live dashboard and Ask the team both showed.
+
+**Kai's words, checked by code (three deploys, all verified live on the demo group).**
+- 08:16 UTC, version `9d2cb84`: the recorded dashboard showed Kai calling Kamal (heart condition)
+  "she". Kai only sees pseudonymous refs, so any gender is a guess. Kai is now told so, and code
+  sends an answer with "he"/"she" back once.
+- The re-planned group then read "Immediately move work to the safest shift (04:00–12:00) to avoid
+  all danger hours" for the Dubai rider, while code's own shift data said `"dangerHours":3`. The same
+  check now catches a shift said to avoid Danger when it does not (`b89c378`).
+- 08:27 UTC: the next re-plan **failed**: `AgentError: Output failed validation: Model output was not
+  valid JSON: Unterminated string in JSON at position 2388`. The corrected reply had come back cut
+  off, and with no repairs left the whole plan was lost, so the check had made things worse. Now the
+  check can never cost the plan: if the corrected reply is unusable (unparseable, or stopped at the
+  token limit), the first answer is kept with only the rejected lines replaced by the template;
+  Kai's token limit is 3000 (it was 1800), and a failed agent run reports the tokens it used
+  (`337d547`). The 08:34 UTC re-plan: 9 check-ins, 0 gendered lines, 0 template lines, and the Dubai
+  rider's line reads "to reduce danger hours". Three regression tests cover the three events.
+
+**An operator page for a blip.** At 14:45 UTC the owner received "HeatShield degraded: Open-Meteo
+upstream latency spike" (5,740 ms against a 1,452 ms average, 31.6σ). The diagnosis was right
+(upstream, no internal errors), but it had cleared by the next check: at 17:45 UTC all 5 probes were
+healthy (Open-Meteo 517 ms), every agent on schedule, availability 100% over 324 checks. One slow
+reading should not page anyone, so Otto now emails about slowness only when two consecutive checks
+agree; failures, errors and overdue agents still page at once, and Agent HQ shows a slow reading
+immediately (regression test from the event; 157 tests).
+
+**The voice: ElevenLabs refused, so Amazon Polly narrates.** The owner's ElevenLabs free account
+answered `401 detected_unusual_activity` ("Free Tier access has been disabled"), twice; no
+characters were used. The owner chose Amazon Polly's long-form engine instead. Through the AWS MCP
+Server:
+
+```
+DescribeVoices Engine=long-form  ->  Danielle, Gregory, Patrick, Ruth (en-US), Alba, Raul (es-ES)
+StartSpeechSynthesisTask x 20     ->  Engine long-form, VoiceId Ruth: 10 MP3s + 10 word speech-mark files,
+                                      all "completed"; RequestCharacters 3,498 per pass, 6,996 in all
+Price List (AmazonPolly, us-east-1): SynthesizeSpeechLongForm-Characters $100 per million  ->  about US$0.70
+```
+
+The MCP sandbox returns S3 objects as base64 text, and our first bundle (length-prefixed binary)
+came back 28 bytes too long: the sandbox had re-encoded the prefix bytes above 0x7F. An all-ASCII
+JSON bundle fixed it. The temporary objects were deleted afterwards (`DeleteObjects`: 22 deleted,
+0 remaining).
+
+**How the video was made** (details in [DEMO_SCRIPT.md](DEMO_SCRIPT.md)): a Playwright script drives
+Chrome on the live site at 1920×1080 and cues every click to the word it illustrates, using Polly's
+word timings. When the live site was slower than the voice, the delay is recorded and the voice
+pauses there (0.5 s once, while the Dubai check loaded); waits are never cut. The Arabic audio in the
+Listen scene is the real Polly file the page played. Captions come from the same word timings. In the
+final take the Arabic plan was written live ("Generated just now by Amazon Nova 2 Lite"), the Karachi
+answer named the 04:00–12:00 shift, and the heat-stroke answer began with the emergency sentence
+after Vera's facts were looked up. Result: 4:44, 1080p H.264, AAC 48 kHz, −16.2 LUFS (peak
+−1.5 dBFS), served from CloudFront at https://d3tda9dyutl7ux.cloudfront.net/demo.html with
+captions, chapters and a transcript.
+
+**Public repository: https://github.com/CodeOps124/heatshield.** Before publishing, the whole
+history was scanned for keys, tokens and account IDs (none in any file or diff; the account ID in
+this log is masked).
