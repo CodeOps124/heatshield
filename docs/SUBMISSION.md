@@ -57,7 +57,7 @@ every 15–20 minutes, and here are the signs that mean call for help", in Urdu,
 |---|---|---|---|
 | Sol (hourly) | finds heatwaves, writes the situation briefing | Excess Heat Factor vs each city's 1991–2020 ERA5 climate; chance of Danger from the 51-member ECMWF ensemble; NWS tiers; OLS trend | Amazon Nova 2 Lite; can never exceed the evidence ceiling |
 | Quinn (daily) | audits the forecast | 14-day verification of day-ahead and 3-day-ahead peaks: error, bias, tier agreement, Danger hits / misses / false alarms | Nova 2 Lite picks claims; code checks each and writes the sentence |
-| Mira | writes each plan | BM25 retrieval over 22 vetted facts, plus Iris's word list | Nova 2 Lite (Claude Haiku 4.5 once enabled) |
+| Mira | writes each plan | BM25 retrieval over 22 vetted facts, plus Iris's word list | Amazon Nova 2 Lite (Nova Pro as backup) |
 | Lexi | checks the language | naive-Bayes language ID | Amazon Nova Pro back-translation |
 | Vera | checks the safety | detectors for phone numbers, medicines, doses | Nova Pro rubric review, with a second reading of any harm objection |
 | Kai (3-hourly, and every question) | plans group check-ins; coordinates Ask the team | logistic urgency score + earliest-deadline-first across time zones; safest-shift search | Nova 2 Lite words each check-in (names never reach the model); Kimi K2.5 coordinates questions, every number checked by code |
@@ -131,7 +131,5 @@ WBGT for occupational use.
 The heat index is a shade value (we say so on screen). Reviewer agents are models too: a rejected
 plan falls back to pre-written advice, which exists in English, Spanish and French only (other
 languages get English with a notice). Listen covers 7 of 13 languages. Quinn scores the forecast
-against the model's own analysis, not weather stations. Claude Haiku 4.5 is wired as the primary
-writer but needs a one-time Anthropic use-case form on the account; until then Amazon Nova writes
-every plan. Email is the live alert channel; SMS is not claimed. HeatShield gives safety
+against the model's own analysis, not weather stations. Every plan is written by Amazon Nova models. Email is the live alert channel; SMS is not claimed. HeatShield gives safety
 information, not medical care.

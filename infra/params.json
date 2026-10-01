@@ -1,8 +1,8 @@
 {
-  "BedrockModelId": "us.anthropic.claude-haiku-4-5-20251001-v1:0",
-  "BedrockFoundationModelArnPattern": "anthropic.claude-haiku-4-5*",
-  "BedrockFallbackModelId": "us.amazon.nova-2-lite-v1:0",
-  "BedrockFallbackFoundationModelArnPattern": "amazon.nova-2-lite*",
+  "BedrockModelId": "us.amazon.nova-2-lite-v1:0",
+  "BedrockFoundationModelArnPattern": "amazon.nova-2-lite*",
+  "BedrockFallbackModelId": "us.amazon.nova-pro-v1:0",
+  "BedrockFallbackFoundationModelArnPattern": "amazon.nova-pro*",
   "AgentModelId": "us.amazon.nova-2-lite-v1:0",
   "AgentFoundationModelArnPattern": "amazon.nova-2-lite*",
   "ReviewerModelId": "us.amazon.nova-pro-v1:0",

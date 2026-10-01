@@ -1,7 +1,7 @@
 /**
  * MIRA — Health Advisor agent, plus the multi-agent review loop that guards her output.
  *
- *   forecast → risk ──► Mira drafts (Claude Haiku 4.5 → Nova 2 Lite)
+ *   forecast → risk ──► Mira drafts (Amazon Nova 2 Lite → Nova Pro)
  *                           │    facts retrieved by BM25 from a vetted CDC/NIOSH/NWS library
  *                           ▼
  *            ┌── Lexi (language: langid + back-translation) ──┐

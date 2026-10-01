@@ -110,7 +110,7 @@
   <text class="s" x="1038" y="180">Nova 2 Lite: writer, agents</text>
   <text class="s" x="1038" y="196">Nova Pro: reviewers, Iris</text>
   <text class="s" x="1038" y="212">Kimi K2.5: Ask the team</text>
-  <text class="s" x="1038" y="226">Claude Haiku 4.5 (pending)</text>
+  <text class="s" x="1038" y="226">on demand, pay per token</text>
 
   <rect class="aws" x="1022" y="240" width="176" height="58" rx="10"/>
   <text class="h" x="1038" y="264">Amazon Polly</text>

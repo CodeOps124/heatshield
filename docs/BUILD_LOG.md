@@ -720,3 +720,29 @@ ListRequestedServiceQuotaChangeHistoryByQuota (L-B99A9384): DesiredValue 1000.0,
 **Testing.** 153 unit and regression tests (9 for Ask the team). Headless Chrome on the live site,
 desktop and phone: example questions, the Hindi plan card with Listen, the heat-stroke answer; no
 console errors, no horizontal overflow.
+
+**1 Oct: the alert loop, proven end to end.** The owner's alert-proof subscription (Dubai,
+outdoor worker) had been confirmed, so the hourly schedule itself sent a real alert: the Dispatcher
+run at 02:00 UTC ("Checked 11: 1 emailed, 1 flagged for leaders, 3 in quiet hours, 1 below
+threshold") reached the owner's inbox at 6:00 AM Dubai time as **"HeatShield: Danger heat risk -
+Dubai, United Arab Emirates"**, from `no-reply@sns.amazonaws.com`. The 03:00 run sent nothing
+again (one alert per level per day). A forced run at 03:59 UTC (`{"forceLocationId": …}`) sent the
+demo copy ("Checked 1: 1 emailed"). The email, fact-checked: "Now: Extreme Caution · heat index
+36 °C (96 °F)", Danger later that day (the subject), the plan's three steps, and "If you feel
+confused, faint, or have slurred speech, call your local emergency number right away." The ops
+topic's confirmation was re-sent and confirmed; `ListSubscriptionsByTopic` now shows both email
+subscriptions Confirmed. The owner signed in to the operator console.
+
+**1 Oct 04:00 UTC: a weather outage.** Otto had reported Open-Meteo 41σ slower than usual at 03:45
+(degraded, correctly attributed upstream). At 04:00 Open-Meteo answered **HTTP 503** for 5 of the
+11 registered places (`alert_forecast_failed … "Open-Meteo HTTP 503"` ×5), and the run's summary
+read "Checked 6: 0 emailed…", the 5 failures visible only in its detail. The weather client now
+pauses before retrying any retryable error (it paused only after a 429), the Dispatcher gives the
+failed cities a second try after 15 s, and the summary says who could not be checked.
+
+**1 Oct: all-Amazon models.** The owner chose not to submit Anthropic's use-case form (it asks for
+company details, and the hackathon asks for minimal spending). Claude Haiku 4.5 was configured as
+the primary writer since day one and every new plan first failed against it before Nova wrote it.
+Amazon Nova 2 Lite is now the primary writer with Nova Pro as backup; the Anthropic model is out of
+the chain and out of the IAM policy. Measured AI spend from launch to this change: about US$1.31
+over four days (US$0.90 of it on the heaviest testing day).

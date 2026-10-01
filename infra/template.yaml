@@ -15,7 +15,7 @@ Parameters:
     Description: Optional second model tried when the primary fails (for example an Amazon Nova profile).
   BedrockFoundationModelArnPattern:
     Type: String
-    Default: 'anthropic.claude-haiku-4-5*'
+    Default: 'amazon.nova-2-lite*'
     Description: Foundation-model name pattern the primary inference profile routes to (IAM scoping).
   BedrockFallbackFoundationModelArnPattern:
     Type: String

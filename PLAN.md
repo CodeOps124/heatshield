@@ -9,7 +9,7 @@ Live: https://d3tda9dyutl7ux.cloudfront.net — details and real command output 
 | 1 · Skeleton deploy / public URL | Done: SAM stack `heatshield` (us-east-1), CloudFront + S3 (OAC) + HTTP API. |
 | 2 · Data model + weather + risk engine | Done: 4 DynamoDB tables, Open-Meteo, NWS heat index verified vs MetPy. |
 | 3 · Registration + leader dashboard | Done: groups, invite links, dashboard, personal page, delete-my-data, read-only demo group. |
-| 4 · Bedrock localized guidance | Done: Mira writes, Lexi + Vera review (up to 2 revisions); cache; validation; 13 languages. Measured: 47 of 52 new plans published after calibration. Claude Haiku 4.5 is primary once the Anthropic use-case form is submitted (owner action); Nova serves until then. |
+| 4 · Bedrock localized guidance | Done: Mira writes, Lexi + Vera review (up to 2 revisions); cache; validation; 13 languages. Measured: 47 of 52 new plans published after calibration. Amazon Nova 2 Lite writes and Nova Pro backs it up (1 Oct: the owner chose not to submit the Anthropic access form, so Claude was removed from the chain). |
 | 5 · Alert loop | Done: EventBridge Scheduler hourly → Lambda → SNS; invoked manually (0 errors). Real email proof pending owner's subscription confirmation. |
 | 6 · Polish for judging | README, architecture diagram, screenshots, submission text, demo script updated for eight agents, operations, the console and Listen (30 Sep). Remaining: public repo, demo video, Builder Center tags. |
 | 7 · Six AI agents (beyond the original plan) | Done: Sol, Mira, Lexi, Vera, Kai, Otto on schedules and on demand; AgentLog; regression test per live incident; 100 tests. |
