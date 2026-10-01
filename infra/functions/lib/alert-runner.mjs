@@ -62,8 +62,8 @@ export function formatAlert({ location, risk, guidance, siteUrl, test = false })
   return { subject, message: lines.filter((l, i, arr) => l !== '' || arr[i - 1] !== '').join('\n') };
 }
 
-export async function runAlertCheck({ store, weather, guidance, notifier, log, siteUrl, forceLocationId = null }) {
-  const summary = { checked: 0, sent: 0, dashboardOnly: 0, pendingConfirmation: 0, quiet: 0, belowThreshold: 0, alreadyAlerted: 0, errors: 0 };
+export async function runAlertCheck({ store, weather, guidance, notifier, log, siteUrl, forceLocationId = null, retryPauseMs = 15_000 }) {
+  const summary = { checked: 0, sent: 0, dashboardOnly: 0, pendingConfirmation: 0, quiet: 0, belowThreshold: 0, alreadyAlerted: 0, errors: 0, unchecked: 0 };
 
   let locations;
   if (forceLocationId) {
@@ -76,15 +76,30 @@ export async function runAlertCheck({ store, weather, guidance, notifier, log, s
 
   const cells = [...new Set(locations.map((l) => `${l.lat},${l.lon}`))];
   const forecasts = new Map();
-  await mapLimit(cells, 5, async (cell) => {
-    const [lat, lon] = cell.split(',').map(Number);
-    try {
-      forecasts.set(cell, await weather.getForecast(lat, lon));
-    } catch (err) {
-      summary.errors += 1;
-      log.warn('alert_forecast_failed', { cell, message: err.message });
-    }
-  });
+  const fetchCells = async (list) => {
+    const failed = [];
+    await mapLimit(list, 5, async (cell) => {
+      const [lat, lon] = cell.split(',').map(Number);
+      try {
+        forecasts.set(cell, await weather.getForecast(lat, lon));
+      } catch (err) {
+        failed.push({ cell, message: err.message });
+      }
+    });
+    return failed;
+  };
+  let failed = await fetchCells(cells);
+  // A weather-service outage should not cost anyone their hourly check (1 Oct 04:00 UTC: Open-Meteo
+  // answered HTTP 503 for 5 of 11 cities). The cities that failed get one more try after a pause.
+  if (failed.length && retryPauseMs > 0) {
+    await new Promise((r) => setTimeout(r, retryPauseMs));
+    failed = await fetchCells(failed.map((f) => f.cell));
+  }
+  for (const f of failed) {
+    summary.errors += 1;
+    log.warn('alert_forecast_failed', { cell: f.cell, message: f.message });
+  }
+  summary.unchecked = locations.filter((l) => !forecasts.has(`${l.lat},${l.lon}`)).length;
 
   await mapLimit(locations, 5, async (location) => {
     const forecast = forecasts.get(`${location.lat},${location.lon}`);

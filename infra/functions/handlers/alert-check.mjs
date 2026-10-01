@@ -35,7 +35,8 @@ export const handler = async (event = {}) => {
     return {
       ...summary,
       outcome: summary.errors ? 'partial' : 'ok',
-      summary: `Checked ${summary.checked}: ${summary.sent} emailed, ${summary.dashboardOnly} flagged for leaders, ${summary.quiet} in quiet hours, ${summary.belowThreshold} below threshold.`,
+      // Say who could not be checked: "Checked 6" alone hid 5 failures on 1 Oct.
+      summary: `Checked ${summary.checked}: ${summary.sent} emailed, ${summary.dashboardOnly} flagged for leaders, ${summary.quiet} in quiet hours, ${summary.belowThreshold} below threshold.${summary.unchecked ? ` ${summary.unchecked} could not be checked (the weather service did not answer); they are checked again next hour.` : ''}`,
       detail: summary,
     };
   });

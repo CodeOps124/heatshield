@@ -28,9 +28,9 @@ export class UpstreamError extends Error {
 async function getJson(url, fetchImpl, retryDelayMs, attempts = 2) {
   let lastErr;
   for (let i = 0; i < attempts; i += 1) {
-    // Open-Meteo limits requests per IP, and Lambda shares outbound IPs with other AWS customers,
-    // so a 429 is often someone else's burst: wait briefly before the second try.
-    if (lastErr?.status === 429 && retryDelayMs) await new Promise((r) => setTimeout(r, retryDelayMs));
+    // Open-Meteo limits requests per IP, and Lambda shares outbound IPs with other AWS customers, so a
+    // 429 is often someone else's burst; a 503 is a brief outage (1 Oct 04:00 UTC). Wait before retrying.
+    if (lastErr && retryDelayMs) await new Promise((r) => setTimeout(r, retryDelayMs));
     try {
       const res = await fetchImpl(url, { signal: AbortSignal.timeout(TIMEOUT_MS) });
       if (res.ok) return await res.json();

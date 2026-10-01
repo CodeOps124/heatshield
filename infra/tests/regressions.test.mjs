@@ -519,6 +519,21 @@ test('Dispatcher 02:00 UTC: an unconfirmed email subscription is not "emailed" (
   assert.equal(alert.channel, 'dashboard (email not confirmed yet)');
 });
 
+test('Dispatcher 1 Oct 04:00 UTC: Open-Meteo answered 503 for 5 of 11 cities; the failed cities get a second try', async () => {
+  const { db, tables } = createFakeDb();
+  const store = createStore({ db, tables });
+  for (const [id, lat] of [['a', 10], ['b', 20], ['c', 30]]) {
+    await db.put({ table: 'locations', item: { locationId: id, name: id, placeName: id, lat, lon: 1, profile: 'outdoor_worker', language: 'en', subscriptionArn: `arn:${id}` } });
+  }
+  const tries = new Map();
+  const flaky = { getForecast: async (lat) => { tries.set(lat, (tries.get(lat) ?? 0) + 1); if (lat !== 10 && tries.get(lat) === 1) throw new Error('Open-Meteo HTTP 503'); if (lat === 30) throw new Error('Open-Meteo HTTP 503'); return hot(); } };
+  const deps = { store, guidance: { getGuidance: async () => GOOD }, notifier: { subscriptionStatus: async () => 'confirmed', publishAlert: async () => 'm' }, log: silentLog };
+  const s = await runAlertCheck({ ...deps, weather: flaky, retryPauseMs: 1 });
+  assert.deepEqual([...tries.entries()].sort(), [[10, 1], [20, 2], [30, 2]], 'only the failed cities are asked again');
+  assert.equal(s.checked, 2);
+  assert.deepEqual([s.errors, s.unchecked], [1, 1], 'still down after the second try: one city, one person, reported');
+});
+
 test('Leaders can delete their whole group (members, subscriptions, alerts); the demo group cannot be deleted', async () => {
   const { db, tables } = createFakeDb();
   const subs = new Map();
