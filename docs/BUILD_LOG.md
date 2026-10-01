@@ -707,8 +707,15 @@ correct Arabic plan had gone to the English fallback: Vera's last objection prop
 written as its own fix, and Lexi blocked a standard word as "not the best word"), and found that
 this new account runs at most **10 Lambda functions at once** (`GetAccountSettings`:
 `ConcurrentExecutions: 10`; the AWS default is 1,000): thirteen plan requests at once got three HTTP
-503s at 06:10 UTC (`Throttles` 3 on the public API). The page now retries refused reads; the
-quota increase is a request only the account owner can make.
+503s at 06:10 UTC (`Throttles` 3 on the public API). The page now retries refused reads. The
+owner requested the quota increase (the coding agent's own request was blocked by its permission
+settings); AWS approved it, and the account confirms it through the MCP server (1 Oct):
+
+```
+GetAccountSettings  AccountLimit.ConcurrentExecutions: 1000, UnreservedConcurrentExecutions: 1000
+ListRequestedServiceQuotaChangeHistoryByQuota (L-B99A9384): DesiredValue 1000.0, Status CASE_CLOSED,
+  LastUpdated 2026-09-30T13:06:17Z
+```
 
 **Testing.** 153 unit and regression tests (9 for Ask the team). Headless Chrome on the live site,
 desktop and phone: example questions, the Hindi plan card with Listen, the heat-stroke answer; no
