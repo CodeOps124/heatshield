@@ -58,10 +58,10 @@ async function probe(fetchImpl, siteUrl, p, nowMs) {
 const SETUP_ERROR = /AccessDenied|ResourceNotFound|use case details|not authorized|don't have access|do not have access/i;
 
 /** Deterministic triage: the facts the watchdog acts on. Issues with severity "info" do not degrade. */
-export function triage({ probes, ewma, heartbeats, errors, modelFailures, modelSetup = null, failedRuns = 0, notes = [] }) {
+export function triage({ probes, ewma, heartbeats, errors, modelFailures, modelSetup = null, failedRuns = 0, notes = [], upstreamWarnings = 0 }) {
   const issues = [];
   const upstream = probes.find((p) => p.id === 'openmeteo');
-  const upstreamTrouble = upstream && (!upstream.ok || ewma.openmeteo?.anomaly);
+  const upstreamTrouble = (upstream && (!upstream.ok || ewma.openmeteo?.anomaly)) || upstreamWarnings > 0;
   for (const p of probes) {
     if (p.id === 'openmeteo') {
       if (!p.ok) issues.push({ code: 'upstream_failing', severity: 'medium', detail: `Weather provider Open-Meteo failed (HTTP ${p.status}${p.error ? `, ${p.error}` : ''}); weather-dependent pages will degrade` });
@@ -70,7 +70,10 @@ export function triage({ probes, ewma, heartbeats, errors, modelFailures, modelS
     }
     // A weather-dependent probe that is slow while the provider is also slow is attributed upstream.
     const weatherDependent = p.id === 'risk';
-    if (!p.ok) issues.push({ code: `${p.id}_failing`, severity: p.id === 'site' || p.id === 'health' ? 'high' : 'medium', detail: `Probe ${p.id} failed (HTTP ${p.status}${p.error ? `, ${p.error}` : ''})${weatherDependent && upstreamTrouble ? ' while Open-Meteo is also degraded' : ''}` });
+    const why = !weatherDependent || !upstreamTrouble ? ''
+      : upstreamWarnings > 0 ? ` because the API's requests to Open-Meteo are failing (${upstreamWarnings} in the last 15 min)`
+        : ' while Open-Meteo is also degraded';
+    if (!p.ok) issues.push({ code: `${p.id}_failing`, severity: p.id === 'site' || p.id === 'health' ? 'high' : 'medium', detail: `Probe ${p.id} failed (HTTP ${p.status}${p.error ? `, ${p.error}` : ''})${why}` });
     else if (ewma[p.id]?.anomaly && !(weatherDependent && upstreamTrouble)) issues.push({ code: `${p.id}_slow`, severity: 'low', detail: `Probe ${p.id} took ${p.ms} ms, ${ewma[p.id].z}σ above its moving average` });
   }
   for (const h of heartbeats) if (h.overdue) issues.push({ code: `${h.agent}_overdue`, severity: 'medium', detail: `${h.agent} last ran ${h.minutesAgo ?? 'never'} min ago (expected every ${h.everyMin} min)` });
@@ -244,7 +247,14 @@ export async function runWatchdog({ fetchImpl = globalThis.fetch, siteUrl, agent
     }
   }
 
-  const { status, issues } = triage({ probes, ewma, heartbeats, errors, modelFailures, modelSetup, failedRuns: failed ?? 0, notes });
+  // The API logs a failed weather call as a warning, not an error. When the risk probe fails, count those, so the
+  // report can name Open-Meteo (1 Oct 19:25 UTC: its five-minute outage was reported as "no errors found").
+  const riskDown = probes.some((p) => p.id === 'risk' && !p.ok);
+  const upstreamWarnings = riskDown && logGroups.publicApi
+    ? await logs.count(logGroups.publicApi, '"upstream_error" "Open-Meteo"', since).catch(() => 0)
+    : 0;
+
+  const { status, issues } = triage({ probes, ewma, heartbeats, errors, modelFailures, modelSetup, failedRuns: failed ?? 0, notes, upstreamWarnings });
   const uptime = await recordUptime({ agentLog, status, nowMs }).catch(() => null);
   const snapshot = {
     status, issues,

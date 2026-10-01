@@ -239,6 +239,59 @@ test('Sol 11:05 UTC: Open-Meteo answered 429 for 2 of 10 areas; the weather clie
   assert.equal(badCalls, 1, 'a bad request is not retried');
 });
 
+test('Public API 1 Oct 19:20 UTC: Open-Meteo timed out for five minutes; the last good forecast (up to 3 h old, marked stale) is served instead of an error', async () => {
+  const f = makeForecast({ nowHour: 9, temp: diurnal(30, 41), rh: () => 50, start: '2026-10-01' });
+  const raw = {
+    timezone: 'UTC', utc_offset_seconds: 0,
+    current: { time: '2026-10-01T09:00', temperature_2m: f.hourly[9].tempC, relative_humidity_2m: 50, is_day: 1 },
+    hourly: { time: f.hourly.map((h) => h.time), temperature_2m: f.hourly.map((h) => h.tempC), relative_humidity_2m: f.hourly.map((h) => h.rh), uv_index: f.hourly.map((_h, i) => (i % 24 >= 7 && i % 24 <= 17 ? 6 : 0)) },
+    daily: { time: ['2026-10-01'], temperature_2m_max: [41], temperature_2m_min: [30], uv_index_max: [9] },
+  };
+  let clock = Date.parse('2026-10-01T09:10:00Z');
+  let up = true;
+  const saved = new Map();
+  const backup = { get: async (k) => saved.get(k) ?? null, put: async (item) => { saved.set(item.cacheKey, item); } };
+  const fetchImpl = async () => { if (!up) throw new Error('The operation was aborted due to timeout'); return { ok: true, status: 200, json: async () => raw }; };
+  const weather = createWeatherClient({ fetchImpl, now: () => clock, retryDelayMs: 0, backup, log: silentLog });
+
+  const fresh = await weather.getForecast(25.2, 55.27);
+  assert.equal(fresh.stale, undefined);
+  assert.ok(saved.has('forecast:25.2,55.27'), 'every good forecast is kept');
+
+  up = false; clock += 2 * 3600_000; // 11:10: the in-memory copy has expired and Open-Meteo is down
+  const stale = await weather.getForecast(25.2, 55.27);
+  assert.equal(stale.stale.fetchedAt, '2026-10-01T09:10:00.000Z');
+  assert.equal(stale.current.time, '2026-10-01T11:00', '"now" moves on to the current hour');
+  assert.equal(stale.current.tempC, f.hourly[11].tempC);
+  assert.equal(stale.current.isDay, true);
+  assert.equal(assessRisk(stale, 'general').localTime, '2026-10-01T11:00');
+
+  // a new Lambda container has no memory of it, only the durable copy
+  const cold = createWeatherClient({ fetchImpl, now: () => clock, retryDelayMs: 0, backup });
+  assert.equal((await cold.getForecast(25.2, 55.27)).stale.fetchedAt, '2026-10-01T09:10:00.000Z');
+
+  // older than 3 hours: the error, never an old forecast
+  clock += 90 * 60_000;
+  await assert.rejects(cold.getForecast(25.2, 55.27), /timeout/);
+
+  // callers that pass no backup (the alert loop, Kai) still fail loudly
+  const strict = createWeatherClient({ fetchImpl, now: () => clock, retryDelayMs: 0 });
+  await assert.rejects(strict.getForecast(25.2, 55.27), /timeout/);
+
+  // and a backup that cannot be written never fails a request
+  up = true;
+  const broken = createWeatherClient({ fetchImpl, now: () => clock, retryDelayMs: 0, backup: { get: async () => null, put: async () => { throw new Error('AccessDenied'); } } });
+  assert.ok((await broken.getForecast(1, 1)).hourly.length > 0);
+});
+
+test('Otto 1 Oct 19:25 UTC: the risk probe failed during the Open-Meteo outage and the report said "no errors"; it now names Open-Meteo', () => {
+  const probes = [{ id: 'site', ok: true, ms: 100 }, { id: 'risk', ok: false, status: 502, ms: 2000 }, { id: 'openmeteo', ok: true, ms: 400 }];
+  const named = triage({ probes, ewma: {}, heartbeats: [], errors: [], modelFailures: 0, upstreamWarnings: 4 });
+  assert.match(named.issues.find((i) => i.code === 'risk_failing').detail, /requests to Open-Meteo are failing \(4 in the last 15 min\)/);
+  const ours = triage({ probes, ewma: {}, heartbeats: [], errors: [], modelFailures: 0 });
+  assert.doesNotMatch(ours.issues.find((i) => i.code === 'risk_failing').detail, /Open-Meteo/, 'no warnings, no blame');
+});
+
 function refusalWorld() {
   const { db, tables } = createFakeDb();
   const store = createStore({ db, tables });

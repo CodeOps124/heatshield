@@ -92,7 +92,7 @@ every 15–20 minutes, and here are the signs that mean call for help", in Urdu,
   HTTP API with per-route throttling and a Cognito JWT authorizer, nine least-privilege Lambda
   functions on Graviton, five on-demand DynamoDB tables, two SNS topics, an SQS dead-letter queue,
   six EventBridge schedules, nine CloudWatch alarms, X-Ray.
-- 157 unit and regression tests. Every problem the live agents hit became a regression test named
+- 159 unit and regression tests. Every problem the live agents hit became a regression test named
   after the event; headless-Chrome end-to-end tests run against production.
 - Privacy by design: locations rounded to ~1 km; emails never stored in our database (only in the
   SNS subscription, double opt-in); bearer secrets stored as SHA-256; one-click delete for members,

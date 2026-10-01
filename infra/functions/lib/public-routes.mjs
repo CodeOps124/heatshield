@@ -85,7 +85,7 @@ export function createPublicApi({ weather, guidance, version, region, agentsApi 
     'GET /api/risk': async (event) => {
       const { lat, lon, profile } = parseRiskQuery(event.queryStringParameters);
       const forecast = await weather.getForecast(lat, lon);
-      return json(200, { lat, lon, risk: assessRisk(forecast, profile) });
+      return json(200, { lat, lon, risk: assessRisk(forecast, profile), ...(forecast.stale ? { stale: forecast.stale } : {}) });
     },
 
     'GET /api/guidance': async (event) => {

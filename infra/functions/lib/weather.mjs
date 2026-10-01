@@ -14,6 +14,8 @@ const PREVIOUS_RUNS_URL = 'https://previous-runs-api.open-meteo.com/v1/forecast'
 const TIMEOUT_MS = 4000;
 const CACHE_TTL_MS = 10 * 60 * 1000;
 const CACHE_MAX = 500;
+// How old a saved forecast may be when Open-Meteo is down (Sol keeps a city's last good data as long).
+export const STALE_MAX_MS = 3 * 60 * 60 * 1000;
 
 export const roundCoord = (x) => Math.round(x * 100) / 100;
 
@@ -80,8 +82,43 @@ export function normalizeForecast(json) {
   };
 }
 
-export function createWeatherClient({ fetchImpl = globalThis.fetch, now = () => Date.now(), retryDelayMs = 1200 } = {}) {
+/**
+ * A saved forecast, moved on to the current hour: "now" becomes the saved hourly row for this hour in the
+ * place's own time, and the result is marked stale with when it was fetched. Null when the saved forecast
+ * is too old or no longer covers the next 24 hours.
+ */
+export function asStale(forecast, fetchedAtMs, nowMs, maxAgeMs = STALE_MAX_MS) {
+  if (!forecast || !Number.isFinite(fetchedAtMs) || nowMs - fetchedAtMs > maxAgeMs) return null;
+  const localHour = `${new Date(nowMs + (forecast.utcOffsetSeconds ?? 0) * 1000).toISOString().slice(0, 13)}:00`;
+  const ahead = forecast.hourly.filter((h) => h.time >= localHour);
+  if (ahead.length < 24 || ahead[0].time !== localHour) return null;
+  const row = ahead[0];
+  return {
+    ...forecast,
+    // is_day is not in the hourly data; a UV index above 0 means the sun is up
+    current: { time: localHour, tempC: row.tempC, rh: row.rh, isDay: (row.uv ?? 0) > 0 },
+    stale: { fetchedAt: new Date(fetchedAtMs).toISOString() },
+  };
+}
+
+/**
+ * @param {object} [o.backup] durable store ({ get(key), put(item) }, the GuidanceCache table) for the last good
+ *   forecast of each ~1 km cell. With it, an Open-Meteo outage (1 Oct 19:20 UTC: timeouts and 503s for five
+ *   minutes) serves that forecast, up to 3 hours old and marked stale, instead of an error. Without it, nothing
+ *   changes: callers that must not use an old forecast simply do not pass one.
+ */
+export function createWeatherClient({ fetchImpl = globalThis.fetch, now = () => Date.now(), retryDelayMs = 1200, backup = null, log = null } = {}) {
   const cache = new Map();
+
+  async function lastGood(key, hit) {
+    let best = hit ? { forecast: hit.value, at: hit.at } : null;
+    try {
+      const item = await backup.get(`forecast:${key}`);
+      const at = Date.parse(item?.fetchedAt);
+      if (item?.forecastJson && (!best || at > best.at)) best = { forecast: JSON.parse(item.forecastJson), at };
+    } catch { /* the backup is a best effort */ }
+    return best ? asStale(best.forecast, best.at, now()) : null;
+  }
 
   async function getForecast(lat, lon) {
     const key = `${roundCoord(lat)},${roundCoord(lon)}`;
@@ -97,10 +134,22 @@ export function createWeatherClient({ fetchImpl = globalThis.fetch, now = () => 
       forecast_days: '4',
       timezone: 'auto',
     });
-    const value = normalizeForecast(await getJson(`${FORECAST_URL}?${params}`, fetchImpl, retryDelayMs));
+    let value;
+    try {
+      value = normalizeForecast(await getJson(`${FORECAST_URL}?${params}`, fetchImpl, retryDelayMs));
+    } catch (err) {
+      const stale = backup ? await lastGood(key, hit) : null;
+      if (!stale) throw err;
+      log?.warn?.('weather_stale_served', { cell: key, fetchedAt: stale.stale.fetchedAt, reason: err.message });
+      return stale;
+    }
 
     if (cache.size >= CACHE_MAX) cache.delete(cache.keys().next().value);
     cache.set(key, { at: now(), value });
+    if (backup) {
+      await backup.put({ cacheKey: `forecast:${key}`, forecastJson: JSON.stringify(value), fetchedAt: new Date(now()).toISOString(), expiresAt: Math.floor(now() / 1000) + STALE_MAX_MS / 1000 })
+        .catch(() => { /* a failed backup must never fail the request */ });
+    }
     return value;
   }
 

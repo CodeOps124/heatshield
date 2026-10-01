@@ -818,6 +818,29 @@ after Vera's facts were looked up. Result: 4:34, 1080p H.264, AAC 48 kHz, −16.
 −1.5 dBFS), served from CloudFront at https://d3tda9dyutl7ux.cloudfront.net/demo.html with
 captions, chapters and a transcript.
 
+**19:20 UTC: a weather outage reached the core feature.** Right after a deploy, Otto's post-deploy check
+reported the risk probe failing (HTTP 502) and emailed the owner; its report said "no errors reported"
+and could not name a cause. The public API's log (CloudWatch, read with `aws logs filter-log-events`):
+
+```
+{"level":"warn","msg":"upstream_error","route":"GET /api/risk","message":"Open-Meteo request failed: The operation was aborted due to timeout"}
+{"level":"warn","msg":"upstream_error","route":"GET /api/risk","message":"Open-Meteo HTTP 503"}
+```
+
+Four failures between 19:20 and 19:25 UTC; by 19:26 the risk check answered HTTP 200 again, and Otto's
+19:30 check was healthy. Open-Meteo answered a machine outside AWS normally throughout, so it was an
+outage for requests from AWS us-east-1. Two changes:
+- **The core flow survives short outages.** The public API keeps the last good forecast of each ~1 km
+  cell in the GuidanceCache table (3-hour TTL). When Open-Meteo fails, it serves that forecast, moved on
+  to the current hour and marked stale; the page says "The weather service is not answering right now,
+  so this uses the forecast fetched N min ago", and Ask the team's heat tool says so too. The alert loop
+  and the scheduled agents do not use it: they never act on an old forecast.
+- **Otto names the cause.** When the risk probe fails, Otto counts the API's `upstream_error` warnings
+  for Open-Meteo (they are warnings, not errors, which is why it had found none) and the incident says
+  the API's requests to Open-Meteo are failing.
+
+Two regression tests from the event (159 tests).
+
 **Public repository: https://github.com/CodeOps124/heatshield.** Before publishing, the whole
 history was scanned for keys, tokens and account IDs (none in any file or diff; the account ID in
 this log is masked).

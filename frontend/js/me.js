@@ -2,7 +2,7 @@
 import { api, qs } from './api.js';
 import {
   el, clear, notice, initThemeToggle, showVersion, hashParams, renderRiskSummary, renderGuidance, renderGuidanceLoading,
-  PROFILES, LANGUAGES, TIER_LABELS, showSiteNotice,
+  PROFILES, LANGUAGES, TIER_LABELS, showSiteNotice, staleNotice,
 } from './ui.js';
 import { renderHeatChart } from './chart.js';
 
@@ -71,8 +71,9 @@ async function boot() {
 
   const q = qs({ lat: loc.lat, lon: loc.lon, profile: loc.profile });
   api(`/api/risk?${q}`)
-    .then(({ risk }) => {
+    .then(({ risk, stale }) => {
       renderRiskSummary($('risk-card'), { risk, placeName: loc.placeName });
+      if (stale) $('risk-card').append(staleNotice(stale));
       renderHeatChart($('chart'), risk.hourly);
     })
     .catch((err) => notice($('risk-card'), err.message));

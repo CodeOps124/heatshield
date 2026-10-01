@@ -2,7 +2,7 @@
 import { api, qs } from './api.js';
 import {
   el, clear, notice, initThemeToggle, showVersion, renderRiskSummary, renderGuidance, renderGuidanceLoading,
-  renderOutlook, linkBox, PROFILES, LANGUAGES, showSiteNotice,
+  renderOutlook, linkBox, PROFILES, LANGUAGES, showSiteNotice, staleNotice,
 } from './ui.js';
 import { renderHeatChart } from './chart.js';
 import { createPlaceSearch } from './place-search.js';
@@ -108,9 +108,10 @@ async function runCheck() {
   riskController?.abort();
   riskController = new AbortController();
   try {
-    const { risk } = await api(`/api/risk?${qs({ lat: state.place.lat, lon: state.place.lon, profile: state.profile })}`, { signal: riskController.signal });
+    const { risk, stale } = await api(`/api/risk?${qs({ lat: state.place.lat, lon: state.place.lon, profile: state.profile })}`, { signal: riskController.signal });
     riskCard.classList.remove('is-stale');
     renderRiskSummary(riskCard, { risk, placeName: state.place.placeName });
+    if (stale) riskCard.append(staleNotice(stale));
     renderHeatChart($('chart'), risk.hourly);
     renderOutlook($('outlook'), risk);
   } catch (err) {

@@ -353,6 +353,13 @@ export function renderOutlook(container, risk) {
 }
 
 // ---------------------------------------------------------------- misc
+/** Shown when the API answered from the last saved forecast because the weather service did not answer. */
+export function staleNotice(stale) {
+  const min = Math.max(1, Math.round((Date.now() - Date.parse(stale.fetchedAt)) / 60_000));
+  const age = min < 60 ? `${min} min` : `${Math.floor(min / 60)} h ${min % 60} min`;
+  return el('p', { class: 'notice mt-16', role: 'status' }, `The weather service is not answering right now, so this uses the forecast fetched ${age} ago.`);
+}
+
 export function notice(container, message, kind = 'error') {
   clear(container).append(el('p', { class: `notice ${kind}`, role: kind === 'error' ? 'alert' : 'status' }, message));
 }

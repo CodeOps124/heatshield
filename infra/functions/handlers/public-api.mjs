@@ -18,7 +18,9 @@ import { log } from '../lib/util.mjs';
 const store = createStore({ db: dynamo, tables });
 const agentLog = createAgentLog({ db: dynamo, table: tables.agentLog });
 const control = createControl({ agentLog });
-const weather = createWeatherClient();
+// The last good forecast of each cell is kept in the GuidanceCache table, so a short Open-Meteo outage serves it
+// (marked stale, up to 3 hours old) instead of an error. Only the public API does this; alerts never use it.
+const weather = createWeatherClient({ backup: store.guidanceCache, log });
 
 const guidance = createGuidanceService({
     converse,

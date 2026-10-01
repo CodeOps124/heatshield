@@ -232,6 +232,7 @@ export function createAskService({ weather, guidance, agentLog, converse, models
           const chanceOn = new Map((chances ?? []).map((d) => [d.date, Math.round(d.pDanger * 100)]));
           return {
             localTime: risk.localTime.replace('T', ' '),
+            ...(forecast.stale ? { forecastNote: `The weather service is not answering, so this is the last forecast, fetched at ${forecast.stale.fetchedAt} (UTC); say so.` } : {}),
             now: { heatIndexC: round(risk.current.heatIndexC), heatIndexF: round(cToF(risk.current.heatIndexC)), airTempC: round(risk.current.tempC), humidityPct: round(risk.current.rh), tier: tier(risk.current.tier) },
             trend: risk.trend.rising ? `rising: ${tier(risk.trend.next6hMaxTier)} within ${risk.trend.hoursUntilRise} h` : 'steady or easing',
             peakNext24h: { heatIndexC: round(risk.peak24h.heatIndexC), heatIndexF: round(cToF(risk.peak24h.heatIndexC)), at: risk.peak24h.label, day: risk.peak24h.isTomorrow ? 'tomorrow' : 'today', tier: tier(risk.peak24h.tier) },
