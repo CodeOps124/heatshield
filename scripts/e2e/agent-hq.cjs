@@ -4,7 +4,7 @@
  *   npm i --no-save playwright-core        (once; it drives your installed Google Chrome)
  *   node scripts/e2e/agent-hq.cjs [https://<site>] [--run-agents]
  *
- * Checks the live office (six desks, speech from real runs, the wall map), the activity feed, an
+ * Checks the live office (eight desks, speech from real runs, the wall map), the activity feed, an
  * agent's panel, and the phone layout. --run-agents also presses the four buttons, which run real
  * agents on AWS (a few US cents; shared cooldowns may answer "try again in a few minutes", which
  * counts as a pass). Exits 1 on any console error or failed check.
@@ -35,9 +35,9 @@ const RUN_AGENTS = args.includes('--run-agents');
   const statuses = [];
   p.on('response', (r) => { if (r.request().method() === 'POST' && r.url().includes('/api/')) statuses.push(`${new URL(r.url()).pathname} -> ${r.status()}`); });
   await p.goto(`${BASE}/agents.html`, { waitUntil: 'networkidle' });
-  if ((await p.locator('.office-desk').count()) !== 6) fail('expected six desks');
+  if ((await p.locator('.office-desk').count()) !== 8) fail('expected eight desks');
   await p.waitForSelector('.office-bubble:not([hidden])', { timeout: 10_000 });
-  step(`office: 6 agents; speaking: "${(await p.textContent('.office-bubble:not([hidden])')).slice(0, 60)}"`);
+  step(`office: 8 agents; speaking: "${(await p.textContent('.office-bubble:not([hidden])')).slice(0, 60)}"`);
   const status = await p.textContent('#hq-status');
   if (!/agent runs in the last 24 h/.test(status)) fail(`status line not populated: ${status}`);
   step(`status: ${status}`);
@@ -49,9 +49,13 @@ const RUN_AGENTS = args.includes('--run-agents');
   step('selecting a desk shows that agent (Otto)');
 
   if (RUN_AGENTS) {
+    // Ask the team: an example question, answered by the agents with their tools (Bedrock).
     await p.click('#task-btn');
-    await p.waitForSelector('#task-result .task-plan, #task-result .notice', { timeout: 90_000 });
-    step(`task: ${(await p.textContent('#task-result .hint').catch(() => '')).trim().slice(0, 90)}`);
+    await p.locator('.ask-example').first().click();
+    await p.waitForSelector('.ask-msg.team:not([aria-busy])', { timeout: 40_000 });
+    const answer = (await p.textContent('.ask-msg.team .ask-answer').catch(() => '')).trim();
+    if (!answer) fail(`Ask the team gave no answer: ${(await p.textContent('.ask-msg.team')).slice(0, 120)}`);
+    step(`ask: "${answer.slice(0, 80)}" (${(await p.textContent('.ask-msg.team details summary')).trim()})`);
     for (const id of ['otto', 'sol', 'kai']) {
       await p.click(`#${id}-btn`);
       await p.waitForTimeout(id === 'otto' ? 9000 : 12_000);

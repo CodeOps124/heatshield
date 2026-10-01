@@ -162,7 +162,11 @@ test('Iris 30 Sep: only word-level fixes go on the list; "means X here" and styl
   assert.equal(isWordLevel("The phrase 'धुंधला दिखना' is not idiomatic.", 'धुंधला दिखना', 'धुंधला दिखाई देना'), false);
   assert.equal(isWordLevel("'تھڑی' is not a correct Urdu word. The correct word for 'midday' is 'دوپہر'.", 'تھڑی دھوپ', 'دوپہر کی دھوپ'), true);
   assert.equal(isWordLevel("Incorrect word; should be 'ठंडा पानी'", 'चंदा पानि', 'ठंडा पानी'), true, 'a small edit of the same phrase');
-  assert.equal(isWordLevel("'Mtelezaji' is not a real Swahili word. It seems intended to mean 'anyone'.", 'mtelezaji', 'mtu yeyote'), true);
+  assert.equal(isWordLevel("'Mtelezaji' is not a real Swahili word. It seems intended to mean 'anyone'.", 'mtelezaji', 'mtu yeyote'), false, 'a guessed replacement');
+  // 1 Oct, Iris's first scheduled run under these rules: a hedged verdict on a different word is a guess.
+  assert.equal(isWordLevel('Not a real Hindi word; likely a misspelling or invented term. Meaning unclear.', 'स्ंगें', 'सावधानी'), false);
+  assert.equal(isWordLevel("This is not a real Swahili word. The intended meaning seems to be 'it will change'.", 'vitageuka', 'vitabadilika'), false, 'vitageuka is a real word');
+  assert.equal(isWordLevel("'কালকের' is not a real Bengali word. It seems to be a typo for 'কালকে'.", 'কালকের সকালে', 'কালকে সকালে'), true, 'a small typo fix may be hedged');
   // Measured on the changed words only: a swapped word inside a shared phrase is not a spelling fix.
   assert.deepEqual(changedWords('مستوى الخطر شديد', 'مستوى الخطر مرتفع'), ['شديد', 'مرتفع']);
   assert.equal(isWordLevel('Incorrect word choice', 'مستوى الخطر شديد', 'مستوى الخطر مرتفع'), false, 'severe -> high softens a warning');

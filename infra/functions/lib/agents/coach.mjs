@@ -25,6 +25,9 @@ const words = (s) => s.split(/\s+/).filter(Boolean).length;
 // sign, and a Tagalog tier-name preference would have replaced "severe heating" with "extreme caution".
 const SPELLING = /not a (?:real|correct|valid)\b|not a word|misspel|typo|invented|does not exist|no such word|grammat|agreement|conjugat/i;
 const CONTEXTUAL = /\bmeans\b|idiomatic|natural|standard term|correct term|commonly|more common|awkward|redundant|clearer|better/i;
+// A replacement the reviewer is unsure of is a guess, not a correction (1 Oct, Hindi: "Not a real
+// Hindi word… Meaning unclear", fixed to "caution"; Swahili "vitageuka", a real word, "seems" to mean…).
+const HEDGED = /unclear|uncertain|not sure|\bseems?\b|\blikely\b|possibly|probably|perhaps|maybe|might be|\bguess/i;
 
 function editRatio(a, b) {
   const x = [...a];
@@ -56,7 +59,8 @@ export function isWordLevel(note, wrong, use) {
   if (CONTEXTUAL.test(note)) return false;
   const [from, to] = changedWords(wrong, use);
   if (!from || !to) return false; // a word added or removed changes what is said
-  return SPELLING.test(note) || editRatio(from, to) <= 0.4;
+  if (editRatio(from, to) <= 0.4) return true; // a small edit of the same word: a typo or form fix
+  return SPELLING.test(note) && !HEDGED.test(note); // a different word only on a definite spelling verdict
 }
 
 /** Term-level corrections from Lexi's runs, counted by (language, wrong, right). */
