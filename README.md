@@ -18,7 +18,7 @@ Built for the AWS Student Builder Group **Zero to Shipped** hackathon · `#socia
 | Criterion | Evidence |
 |---|---|
 | Technical innovation | [Eight agents](#eight-ai-agents), each pairing a real algorithm (Excess Heat Factor, a 51-member ensemble, BM25, naive-Bayes language ID, earliest-deadline-first scheduling, EWMA control charts) with a model on Amazon Bedrock, while code makes the final call. [Ask the team](#ask-the-team): a coordinator model chosen by measuring five, whose answers are checked by code. Amazon Polly reads plans aloud. |
-| Implementation quality | Live on AWS from one SAM template. 155 unit and regression tests, and headless-Chrome tests against production. Nine CloudWatch alarms, a dead-letter queue and a hard AI budget ([Always on](#always-on-and-under-control)). Every incident the live agents hit became a regression test ([What a live system taught us](#what-a-live-system-taught-us)). |
+| Implementation quality | Live on AWS from one SAM template. 156 unit and regression tests, and headless-Chrome tests against production. Nine CloudWatch alarms, a dead-letter queue and a hard AI budget ([Always on](#always-on-and-under-control)). Every incident the live agents hit became a regression test ([What a live system taught us](#what-a-live-system-taught-us)). |
 | Community impact | WHO and ILO numbers ([The problem](#the-problem)). One leader protects a whole group with one link ([the live demo dashboard](https://d3tda9dyutl7ux.cloudfront.net/group.html#g=5NpOU_pMXAK_&k=Q51QdY6DIZK7P4pLCF9B8KAiofrIcFgj)). Plans in 13 languages, read aloud for people who find reading hard. |
 | Storytelling | The [demo video](https://d3tda9dyutl7ux.cloudfront.net/demo.html), recorded on the live site with nothing mocked, and Agent HQ, which draws the agents' real runs live. |
 
@@ -202,7 +202,7 @@ The agents run on real forecasts and real traffic, so they hit real problems. Ea
 - **The watchdog's blind spot.** Otto marked the site degraded over 10 failed calls to the primary model: every one was the known setup state (an Anthropic model configured before its access form was submitted; Amazon Nova has since been made the primary writer and the Anthropic model dropped). Otto counted log events across pages but read the lines from the first page only, and CloudWatch Logs can return an empty first page. It reads every page now.
 - **Reviewers refuted by the message itself.** A correct Arabic plan went to the English fallback: Vera's last objection proposed the sentence as written as its own "fix", and the one before asked for more heat-stroke signs while the help sentence already named the emergency number. Objections the message itself refutes are now notes.
 - **Ask the team, first live answers.** Kai retold a reviewed Hindi plan in its own words (the plan is now shown exactly as reviewed), put "call emergency services" last in a heat-stroke answer (it must come first), and once answered a first-aid question without looking up the vetted facts (health questions now require them; the library gained the NIOSH heat-stroke first-aid steps, checked against the NIOSH page).
-- **A guessed gender.** Kai sees only pseudonymous refs (M1, M2…), never names, so when its plan called a member with a heart condition "she" (1 Oct), it was guessing. Kai is now told it knows no one's gender; an answer that uses "he" or "she" is sent back once, and any line that still does gets the neutral template.
+- **Kai's words, checked by code.** Kai sees only pseudonymous refs (M1, M2…), never names, so when its plan called a member with a heart condition "she" (1 Oct), it was guessing. After that fix, it told a leader to move a Dubai rider to the safest shift "to avoid all danger hours", although code had counted 3 Danger hours left in that shift. Code now checks both: an answer that guesses a gender, or says a shift avoids Danger when it does not, is sent back once, and any line that still does gets the neutral template.
 - **A limit we did not set.** Thirteen plan requests at once got three HTTP 503s: this new AWS account could run only 10 Lambda functions at once (the usual default is 1,000). The account's quota was raised to 1,000 the same day (confirmed with `GetAccountSettings`), and the page also retries a refused read.
 
 ## Cost
@@ -239,7 +239,7 @@ The development process is logged with real command output in [docs/BUILD_LOG.md
 ## Run it yourself
 
 ```bash
-npm test                        # 155 unit and regression tests, no AWS needed
+npm test                        # 156 unit and regression tests, no AWS needed
 npm run dev                     # http://localhost:8787 — real weather, in-memory data, Bedrock stubbed
 HEATSHIELD_PROXY=https://<site> PORT=8788 node scripts/dev-server.mjs   # local UI against the live agents
 npm run deploy                  # test -> lint -> sam build/deploy -> upload site -> smoke test -> Otto post-deploy check

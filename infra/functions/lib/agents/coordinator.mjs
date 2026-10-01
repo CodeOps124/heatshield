@@ -125,22 +125,37 @@ const templateReason = (row) => `${TIER_LABELS[row.next12Tier]} expected; alerts
 // Kai sees pseudonymous refs, never names or genders, so "he" or "she" is always a guess
 // (1 Oct: a member with a heart condition was called "she").
 const GENDERED = /\b(he|she|him|his|her|hers|himself|herself)\b/i;
+// "move to the safest shift to avoid all danger hours" when code's numbers say it still has some (1 Oct, Dubai: 3).
+const AVOIDS_DANGER = /\b(avoid(?:s|ing)?|without|free of|no|zero|escapes?)\b[^.;]{0,30}\bdanger/i;
 
-/** Model-written texts in a parsed plan that use a gendered pronoun. */
-export function genderedText(plan) {
-  return [plan.summary, plan.teamNote, ...plan.checkIns.filter((c) => c.writtenBy === 'model').flatMap((c) => [c.action, c.reason])]
-    .filter((t) => t && GENDERED.test(t));
+/**
+ * What code can check in Kai's words: a guessed gender anywhere, or a check-in saying the safest shift
+ * avoids Danger when the computed shift still has Danger hours.
+ */
+export function checkInProblems(plan) {
+  const problems = [];
+  for (const text of [plan.summary, plan.teamNote]) if (text && GENDERED.test(text)) problems.push({ text, message: 'you do not know anyone\'s gender, so refer to each person as "they" or by their role' });
+  for (const c of plan.checkIns) {
+    if (c.writtenBy !== 'model') continue;
+    for (const text of [c.action, c.reason]) {
+      if (GENDERED.test(text)) problems.push({ ref: c.ref, text, message: 'you do not know anyone\'s gender, so refer to each person as "they" or by their role' });
+      else if (c.shift?.best?.dangerHours > 0 && AVOIDS_DANGER.test(text)) {
+        problems.push({ ref: c.ref, text, message: `${c.ref}'s safest shift still has ${c.shift.best.dangerHours} Danger hour(s), so say it has fewer Danger hours, not that it avoids them` });
+      }
+    }
+  }
+  return problems;
 }
 
-/** Replaces any text that still guesses a gender with the template wording (after one chance to fix it). */
-export function withoutGendered(plan) {
+/** After one chance to fix them, lines that still fail get the template wording instead. */
+export function withoutProblems(plan, problems = checkInProblems(plan)) {
+  const refs = new Set(problems.map((p) => p.ref).filter(Boolean));
+  const bad = new Set(problems.map((p) => p.text));
   return {
     ...plan,
-    summary: GENDERED.test(plan.summary) ? `${plan.checkIns.length} people need a check-in.` : plan.summary,
-    teamNote: plan.teamNote && GENDERED.test(plan.teamNote) ? '' : plan.teamNote,
-    checkIns: plan.checkIns.map((c) => (c.writtenBy === 'model' && (GENDERED.test(c.action) || GENDERED.test(c.reason))
-      ? { ...c, action: templateAction(c), reason: templateReason(c), writtenBy: 'template' }
-      : c)),
+    summary: bad.has(plan.summary) ? `${plan.checkIns.length} people need a check-in.` : plan.summary,
+    teamNote: plan.teamNote && bad.has(plan.teamNote) ? '' : plan.teamNote,
+    checkIns: plan.checkIns.map((c) => (refs.has(c.ref) ? { ...c, action: templateAction(c), reason: templateReason(c), writtenBy: 'template' } : c)),
   };
 }
 
@@ -207,7 +222,7 @@ async function planGroup({ group, store, weather, agentLog, converse, models, no
     return { plan, usage: { inputTokens: 0, outputTokens: 0 }, toolCalls: [], turns: 0, model: null };
   }
 
-  let genderChecked = false;
+  let checked = false;
   const run = await runAgent({
     agent: {
       name: 'kai',
@@ -239,14 +254,14 @@ async function planGroup({ group, store, weather, agentLog, converse, models, no
     input: `Plan today's heat check-ins for the group "${group.name}". Use your tools, then reply with ONLY this JSON:\n{"summary":"2-3 sentences for the leader","checkIns":[{"ref":"M1","action":"...","reason":"..."}],"teamNote":"one line for the whole group"}`,
     converse,
     deadline,
-    // A guessed gender is sent back once; if the next answer still guesses, those lines get the template.
+    // What code can check is sent back once; lines that still fail on the next answer get the template.
     validate: (text) => {
-      const first = !genderChecked;
-      genderChecked = true;
+      const first = !checked;
+      checked = true;
       const parsed = parseCoordinatorOutput(text, forModel);
-      const gendered = genderedText(parsed);
-      if (first && gendered.length) throw new Error(`you do not know anyone's gender, so refer to each person as "they" or by their role; rewrite: "${gendered[0].slice(0, 120)}"`);
-      return withoutGendered(parsed);
+      const problems = checkInProblems(parsed);
+      if (first && problems.length) throw new Error(problems.map((p) => `${p.message}; rewrite: "${p.text.slice(0, 120)}"`).join(' | '));
+      return withoutProblems(parsed, problems);
     },
   });
 

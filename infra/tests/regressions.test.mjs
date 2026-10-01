@@ -10,7 +10,7 @@ import { createGuidanceService } from '../functions/lib/guidance.mjs';
 import { parseLanguageReview } from '../functions/lib/agents/language-reviewer.mjs';
 import { parseSafetyReview, createSafetyReviewer, evidenceInMessage, namesEmergencyNumber } from '../functions/lib/agents/safety-reviewer.mjs';
 import { runSentinel, headlineFor } from '../functions/lib/agents/sentinel.mjs';
-import { runCoordinator, genderedText } from '../functions/lib/agents/coordinator.mjs';
+import { runCoordinator, checkInProblems, withoutProblems } from '../functions/lib/agents/coordinator.mjs';
 import { triage, runWatchdog } from '../functions/lib/agents/watchdog.mjs';
 import { createLogsReader } from '../functions/lib/logs-reader.mjs';
 import { runAlertCheck } from '../functions/lib/alert-runner.mjs';
@@ -521,7 +521,24 @@ test('Kai 1 Oct: a member with a heart condition was called "she"; a guessed gen
   assert.equal(saved.teamNote, 'Water breaks for everyone.');
 
   // words that only contain the letters are fine
-  assert.deepEqual(genderedText({ summary: 'Shelter here; the heat is high.', teamNote: 'Share water.', checkIns: [] }), []);
+  assert.deepEqual(checkInProblems({ summary: 'Shelter here; the heat is high.', teamNote: 'Share water.', checkIns: [] }), []);
+});
+
+test('Kai 1 Oct: "move to the safest shift to avoid all danger hours" when that shift still had 3 Danger hours', () => {
+  const shift = (dangerHours) => ({ day: '2026-10-02', length: 8, best: { start: '04:00', end: '12:00', dangerHours, extremeCautionHours: 5 }, standard: { start: '07:00', end: '15:00', dangerHours: 6, extremeCautionHours: 2 } });
+  const row = (ref, s, action) => ({ ref, order: 1, checkInBy: 'now', next12Tier: 'danger', alertTier: 'extreme_caution', riskyHours: 'all of the next 24 hours', shift: s, action, reason: 'Outdoor worker in Danger heat.', writtenBy: 'model' });
+  const plan = { summary: 'Two crews.', teamNote: '', checkIns: [
+    row('M1', shift(3), 'Move work to the safest shift (04:00-12:00) to avoid all danger hours.'),
+    row('M2', shift(0), 'Move work to 04:00-12:00 to avoid all danger hours.'),
+    row('M3', shift(3), 'Move work to 04:00-12:00: it halves the Danger hours.'),
+  ] };
+  const problems = checkInProblems(plan);
+  assert.deepEqual(problems.map((p) => p.ref), ['M1'], 'true claims and accurate wording pass');
+  assert.match(problems[0].message, /still has 3 Danger hour/);
+  const fixed = withoutProblems(plan, problems);
+  assert.equal(fixed.checkIns[0].writtenBy, 'template');
+  assert.doesNotMatch(fixed.checkIns[0].action, /avoid/i);
+  assert.equal(fixed.checkIns[1].action, plan.checkIns[1].action);
 });
 
 test('Kai: empty groups (left by end-to-end tests) are skipped, not counted as planned', async () => {
